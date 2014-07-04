@@ -36,7 +36,7 @@ class VMHandler(ResourceHandler):
     """
         This class handles managing openstack resources
     """
-    vm_types = ["m1.small", "m1.medium", "m1.large", "m1.xlarge", "m3.medium", "m3.large", 
+    vm_types = ["m1.small", "m1.medium", "m1.large", "m1.xlarge", "m3.medium", "m3.large",
         "m3.xlarge", "m3.2xlarge", "c1.medium", "c1.xlarge", "c3.large", "c3.xlarge", "c3.2xlarge",
         "c3.4xlarge", "c3.8xlarge", "cc2.8xlarge", "m2.xlarge", "m2.2xlarge", "m2.4xlarge", "r3.large"
         "r3.xlarge", "r3.2xlarge", "r3.4xlarge", "r3.8xlarge", "cr1.8xlarge", "hi1.4xlarge",
@@ -54,7 +54,7 @@ class VMHandler(ResourceHandler):
         """
         LOGGER.debug("Checking state of resource %s" % resource)
 
-        conn = ec2.connect_to_region(resource.iaas_config["region"], 
+        conn = ec2.connect_to_region(resource.iaas_config["region"],
                     aws_access_key_id = resource.iaas_config["access_key"],
                     aws_secret_access_key = resource.iaas_config["secret_key"])
 
@@ -112,7 +112,7 @@ class VMHandler(ResourceHandler):
         if len(changes) > 0:
             LOGGER.debug("Making changes to resource %s" % resource.id)
 
-            conn = ec2.connect_to_region(resource.iaas_config["region"], 
+            conn = ec2.connect_to_region(resource.iaas_config["region"],
                     aws_access_key_id = resource.iaas_config["access_key"],
                     aws_secret_access_key = resource.iaas_config["secret_key"])
 
@@ -124,10 +124,11 @@ class VMHandler(ResourceHandler):
                     raise Exception("Flavor %s does not exist for vm %s" % (resource.flavor, resource))
 
                 res = conn.run_instances(image_id = resource.image, instance_type = resource.flavor,
-                        key_name = resource.key_name, user_data = resource.user_data.encode())
+                        key_name = resource.key_name, user_data = resource.user_data.encode(),
+                        placement = "eu-west-1b")
 
                 vm = res.instances[0]
-                
+
                 conn.create_tags(vm.id, {"Name" : resource.name})
 
             return True
@@ -138,14 +139,14 @@ class VMHandler(ResourceHandler):
         """
         LOGGER.debug("Finding facts for %s" % resource.id.resource_str())
 
-        conn = ec2.connect_to_region(resource.iaas_config["region"], 
+        conn = ec2.connect_to_region(resource.iaas_config["region"],
             aws_access_key_id = resource.iaas_config["access_key"],
             aws_secret_access_key = resource.iaas_config["secret_key"])
 
-        vpc_conn = vpc.connect_to_region(resource.iaas_config["region"], 
+        vpc_conn = vpc.connect_to_region(resource.iaas_config["region"],
             aws_access_key_id = resource.iaas_config["access_key"],
             aws_secret_access_key = resource.iaas_config["secret_key"])
-        
+
         reservations = conn.get_all_instances()
         vm_list = {}
         for res in reservations:
@@ -153,7 +154,7 @@ class VMHandler(ResourceHandler):
                 if vm.state == "running":
                     if "Name" in vm.tags:
                         vm_list[vm.tags["Name"]] = vm
-    
+
                     else:
                         vm_list[str(vm)] = vm
 
@@ -163,7 +164,7 @@ class VMHandler(ResourceHandler):
             facts[key] = {}
             if len(vm.interfaces) > 0:
                 iface = vm.interfaces[0]
-                
+
                 facts[key]["mac_address"] = iface.mac_address
                 facts[key]["ip_address"] = iface.private_ip_address
 
