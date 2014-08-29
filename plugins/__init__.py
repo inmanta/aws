@@ -43,9 +43,11 @@ class VMHandler(ResourceHandler):
         "hs1.8xlarge", "i2.xlarge", "i2.2xlarge", "i2.4xlarge", "i2.8xlarge", "t1.micro",
         "cg1.4xlarge", "g2.2xlarge"]
 
-    @classmethod
-    def is_available(self, io):
-        return False
+    def available(self, resource):
+        """
+            This handler is available to all virtual machines that have type set to aws in their iaas_config.
+        """
+        return "type" in resource.iaas_config and resource.iaas_config["type"] == "aws" 
 
     def check_resource(self, resource):
         """
