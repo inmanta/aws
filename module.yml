@@ -1,7 +1,6 @@
-name: aws
-version: 0.1.2
-source: git@github.com:bartv/imp-aws
+author: Bart Vanbrabant <bart@impera.io>
 license: Apache 2.0
-author: Bart Vanbrabant <bart.vanbrabant@cs.kuleuven.be>
-requires:
-    vm: git@github.com:bartv/imp-vm, ">= 0.1"
+name: aws
+requires: {vm: 'git@github.com:bartv/imp-vm, ">= 0.1"'}
+source: git@github.com:bartv/imp-aws
+version: 0.1.3
