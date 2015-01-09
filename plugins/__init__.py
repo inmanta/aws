@@ -175,7 +175,7 @@ class VMHandler(ResourceHandler):
 
                     facts[key]["cidr"] = subnet.cidr_block
 
-                    from Imp.iplib import CIDR
+                    from iplib import CIDR
                     o = CIDR(facts[key]["cidr"])
 
                     facts[key]["netmask"] = str(o.nm)
