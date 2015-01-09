@@ -16,9 +16,9 @@
     Contact: bart@impera.io
 """
 
-from Imp.resources import Resource, resource, ResourceNotFoundExcpetion
-from Imp.agent.handler import provider, ResourceHandler
-from Imp.execute.util import Unknown
+from impera.resources import Resource, resource, ResourceNotFoundExcpetion
+from impera.agent.handler import provider, ResourceHandler
+from impera.execute.util import Unknown
 
 from boto import ec2, vpc
 
@@ -46,7 +46,7 @@ class VMHandler(ResourceHandler):
         """
             This handler is available to all virtual machines that have type set to aws in their iaas_config.
         """
-        return "type" in resource.iaas_config and resource.iaas_config["type"] == "aws" 
+        return "type" in resource.iaas_config and resource.iaas_config["type"] == "aws"
 
     def check_resource(self, resource):
         """
