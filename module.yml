@@ -1,6 +1,8 @@
 author: Bart Vanbrabant <bart@impera.io>
 license: Apache 2.0
 name: aws
-requires: {vm: 'git@github.com:bartv/imp-vm, ">= 0.1"'}
-source: git@github.com:bartv/imp-aws
+source: git@github.com:impera-io/aws
 version: 0.2b1
+requires:
+    vm: git@github.com:impera-io/vm, ">= 0.1"
+
