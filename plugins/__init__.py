@@ -40,7 +40,7 @@ class VMHandler(ResourceHandler):
         "c3.4xlarge", "c3.8xlarge", "cc2.8xlarge", "m2.xlarge", "m2.2xlarge", "m2.4xlarge", "r3.large"
         "r3.xlarge", "r3.2xlarge", "r3.4xlarge", "r3.8xlarge", "cr1.8xlarge", "hi1.4xlarge",
         "hs1.8xlarge", "i2.xlarge", "i2.2xlarge", "i2.4xlarge", "i2.8xlarge", "t1.micro",
-        "cg1.4xlarge", "g2.2xlarge"]
+        "cg1.4xlarge", "g2.2xlarge", "t2.micro", "t2.small", "t2.medium"]
 
     def available(self, resource):
         """
@@ -65,17 +65,23 @@ class VMHandler(ResourceHandler):
         vm_list = {}
         for res in reservations:
             for vm in res.instances:
-                if "Name" in vm.tags:
-                    vm_list[vm.tags["Name"]] = vm
+                name = str(vm)
 
+                if "Name" in vm.tags:
+                    name = vm.tags["Name"]
+
+                if name in vm_list:
+                    if vm.state != "terminated":
+                        vm_list[name] = vm
                 else:
-                    vm_list[str(vm)] = vm
+                    vm_list[name] = vm
+
 
         # how the vm doing
         if resource.name in vm_list:
-            vm_state["vm"] = vm_list[resource.name]
+            vm_state["vm"] = vm_list[resource.name].state
         else:
-            vm_state["vm"] = None
+            vm_state["vm"] = "terminated"
 
         # check if the key is there
         vm_state["key"] = False
@@ -99,8 +105,12 @@ class VMHandler(ResourceHandler):
         if not vm_state["key"]:
             changes["key"] = (resource.key_name, resource.key_value)
 
-        if vm_state["vm"] is None or vm_state["vm"].state == "terminated":
-            changes["vm"] = resource
+        purged = "running"
+        if resource.purged:
+            purged = "terminated"
+
+        if vm_state["vm"] != purged:
+            changes["state"] = (vm_state["vm"], purged)
 
         return changes
 
@@ -120,13 +130,13 @@ class VMHandler(ResourceHandler):
             if "key" in changes:
                 conn.import_key_pair(changes["key"][0], changes["key"][1].encode())
 
-            if "vm" in changes:
+            if "state" in changes:
                 if resource.flavor not in VMHandler.vm_types:
                     raise Exception("Flavor %s does not exist for vm %s" % (resource.flavor, resource))
 
                 res = conn.run_instances(image_id = resource.image, instance_type = resource.flavor,
                         key_name = resource.key_name, user_data = resource.user_data.encode(),
-                        placement = "eu-west-1b")
+                        placement = resource.iaas_config["availability_zone"])
 
                 vm = res.instances[0]
 
@@ -180,5 +190,6 @@ class VMHandler(ResourceHandler):
 
                     facts[key]["netmask"] = str(o.nm)
 
-        return facts
-
+        if resource.id.resource_str() in facts:
+            return facts[resource.id.resource_str()]
+        return {}

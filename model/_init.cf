@@ -21,6 +21,7 @@ entity AWSConfig extends vm::IaaSConfig:
         The configuration to access Amazon Web Services
     """
     string region
+    string availability_zone
     string access_key
     string secret_key
 end
