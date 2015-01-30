@@ -20,6 +20,7 @@ from impera.resources import Resource, resource, ResourceNotFoundExcpetion
 from impera.agent.handler import provider, ResourceHandler
 from impera.execute.util import Unknown
 from impera.plugins.base import plugin
+from impera.export import resource_to_id
 
 from boto import ec2, vpc
 from boto.ec2 import elb
@@ -38,6 +39,13 @@ boto_log.setLevel(logging.WARNING)
 @plugin
 def elbid(name: "string") -> "string":
     return re.sub("[\.]", "-", name)
+
+@resource_to_id("aws::ELB")
+def vm_to_id(resource):
+    """
+        Convert a resource to an id
+    """
+    return "aws::ELB[%s,name=%s]" % (resource.iaas.name, resource.name)
 
 
 def get_config(exporter, vm):
@@ -386,6 +394,7 @@ class VMHandler(ResourceHandler):
 
                 facts[key]["mac_address"] = iface.mac_address
                 facts[key]["ip_address"] = iface.private_ip_address
+                facts[key]["public_ip"] = vm.ip_address
 
                 subnets = vpc_conn.get_all_subnets(iface.subnet_id)
                 if len(subnets) > 0:
