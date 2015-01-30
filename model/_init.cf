@@ -32,3 +32,39 @@ end
 
 implement AWSConfig using awsConfig
 
+entity LoadBalancer extends web::LoadBalancer:
+    """
+        A AWS loadbalancer
+    """
+end
+
+implement LoadBalancer using awsLB
+
+implementation awsLB for LoadBalancer:
+    for lb_app in applications:
+        elb_name = aws::elbid(lb_app.name.hostname)
+        elb = ELB(name=elb_name, iaas=iaas)
+        for app in lb_app.app_instances:
+            elb.instances = app.container.host
+        end
+    end
+end
+
+entity ELB:
+    """
+        An ELB load balancer
+    """
+    string name
+    string security_group="default"
+    number listen_port=80
+    number dest_port=80
+    string protocol="http"
+end
+
+implement ELB using std::none
+
+vm::IaaS iaas [1] -- [0:] LoadBalancer loadbalancers
+
+vm::IaaS iaas [1] -- [0:] ELB aws_elb
+vm::Host instances [0:] -- [0:] ELB aws_elb
+
