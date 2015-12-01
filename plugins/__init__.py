@@ -350,9 +350,11 @@ class VMHandler(ResourceHandler):
                 if resource.flavor not in VMHandler.vm_types:
                     raise Exception("Flavor %s does not exist for vm %s" % (resource.flavor, resource))
 
-                res = conn.run_instances(image_id = resource.image, instance_type = resource.flavor,
-                        key_name = resource.key_name, user_data = resource.user_data.encode(),
-                        placement = resource.iaas_config["availability_zone"])
+                res = conn.run_instances(image_id=resource.image, instance_type=resource.flavor,
+                                         key_name=resource.key_name,
+                                         user_data=resource.user_data.encode(),
+                                         placement=resource.iaas_config["availability_zone"],
+                                         subnet_id=resource.network)
 
                 vm = res.instances[0]
 
