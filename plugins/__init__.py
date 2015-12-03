@@ -345,20 +345,35 @@ class VMHandler(ResourceHandler):
 
             if "key" in changes:
                 conn.import_key_pair(changes["key"][0], changes["key"][1].encode())
-
             if "state" in changes:
-                if resource.flavor not in VMHandler.vm_types:
-                    raise Exception("Flavor %s does not exist for vm %s" % (resource.flavor, resource))
+                if changes["state"][0] == "terminated" and changes["state"][1] == "running":
+                    if resource.flavor not in VMHandler.vm_types:
+                        raise Exception("Flavor %s does not exist for vm %s" % (resource.flavor, resource))
 
-                res = conn.run_instances(image_id=resource.image, instance_type=resource.flavor,
-                                         key_name=resource.key_name,
-                                         user_data=resource.user_data.encode(),
-                                         placement=resource.iaas_config["availability_zone"],
-                                         subnet_id=resource.network)
+                    res = conn.run_instances(image_id=resource.image, instance_type=resource.flavor,
+                                             key_name=resource.key_name,
+                                             user_data=resource.user_data.encode(),
+                                             placement=resource.iaas_config["availability_zone"],
+                                             subnet_id=resource.network)
 
-                vm = res.instances[0]
+                    vm = res.instances[0]
+                    conn.modify_instance_attribute(vm.id, attribute='sourceDestCheck', value=False)
+                    conn.create_tags(vm.id, {"Name" : resource.name})
 
-                conn.create_tags(vm.id, {"Name" : resource.name})
+                elif changes["state"][1] == "terminated" and changes["state"][0] == "running":
+                    reservations = conn.get_all_instances()
+                    vm_list = {}
+                    for res in reservations:
+                        for vm in res.instances:
+                            if vm.state == "running":
+                                if "Name" in vm.tags:
+                                    vm_list[vm.tags["Name"]] = vm
+
+                                else:
+                                    vm_list[str(vm)] = vm
+
+                    if resource.name in vm_list:
+                        vm_list[resource.name].terminate()
 
             return True
 
