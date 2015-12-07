@@ -241,7 +241,6 @@ class ELBHandler(ResourceHandler):
             
         if the_lb is not None:
             return {"dns_name": the_lb.dns_name}
-        
 
         return {}
 

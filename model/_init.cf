@@ -36,14 +36,18 @@ entity LoadBalancer extends web::LoadBalancer:
     """
         A AWS loadbalancer
     """
+    number dest_port=80
 end
+
+ELB elb [1] -- [1] LoadBalancer lb
 
 implement LoadBalancer using awsLB
 
 implementation awsLB for LoadBalancer:
     for lb_app in applications:
         elb_name = aws::elbid(lb_app.name.hostname)
-        elb = ELB(name=elb_name, iaas=iaas)
+        elb = ELB(name=elb_name, iaas=iaas, dest_port=dest_port)
+        self.elb = elb
         for app in lb_app.app_instances:
             elb.instances = app.container.host
         end
