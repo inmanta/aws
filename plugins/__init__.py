@@ -92,16 +92,16 @@ class ELBHandler(ResourceHandler):
         ec2_conn = ec2.connect_to_region(resource.iaas_config["region"],
                                          aws_access_key_id = resource.iaas_config["access_key"],
                                          aws_secret_access_key = resource.iaas_config["secret_key"])
-        
+
         elb_conn = elb.connect_to_region(resource.iaas_config["region"],
                                          aws_access_key_id = resource.iaas_config["access_key"],
                                          aws_secret_access_key = resource.iaas_config["secret_key"])
 
         loadbalancers = elb_conn.get_all_load_balancers()
         vm_names = {vm.id: vm.tags["Name"] for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags}
-        
+
         elb_state = {"purged" : True}
-        
+
         for lb in loadbalancers:
             if lb.name == resource.name:
                 elb_state["purged"] = False
@@ -113,20 +113,20 @@ class ELBHandler(ResourceHandler):
                     elb_state["listen_port"] = lst[0]
                     elb_state["dst_port"] = lst[1]
                     elb_state["protocol"] = lst[2].lower()
-                
+
                 security_groups = {sg.id: sg.name for sg in ec2_conn.get_all_security_groups()}
-                
+
                 if len(lb.security_groups) > 0:
                     if len(lb.security_groups) > 1:
                         LOGGER.warning("This handler does not support multiple security groups.")
-                    
+
                     sg = lb.security_groups[0]
                     if sg in security_groups:
-                        elb_state["security_group"] = security_groups[sg] 
-                        
+                        elb_state["security_group"] = security_groups[sg]
+
                     else:
-                        raise Exception("Invalid amazon response, security group is used but not defined?!?") 
-        
+                        raise Exception("Invalid amazon response, security group is used but not defined?!?")
+
         return elb_state
 
     def list_changes(self, resource):
@@ -142,7 +142,7 @@ class ELBHandler(ResourceHandler):
                 desired_value = getattr(resource, key)
                 if desired_value != value:
                     changes[key] = (value, desired_value)
-                
+
             elif key == "purged":
                 if elb_state["purged"]:
                     changes["purged"] = (True, False)
@@ -160,62 +160,62 @@ class ELBHandler(ResourceHandler):
             ec2_conn = ec2.connect_to_region(resource.iaas_config["region"],
                                              aws_access_key_id = resource.iaas_config["access_key"],
                                              aws_secret_access_key = resource.iaas_config["secret_key"])
-        
+
             elb_conn = elb.connect_to_region(resource.iaas_config["region"],
                                              aws_access_key_id = resource.iaas_config["access_key"],
                                              aws_secret_access_key = resource.iaas_config["secret_key"])
 
             security_groups = {sg.name: sg.id for sg in ec2_conn.get_all_security_groups()}
-            vm_names = {vm.tags["Name"]: vm.id for res in ec2_conn.get_all_instances() 
+            vm_names = {vm.tags["Name"]: vm.id for res in ec2_conn.get_all_instances()
                                                for vm in res.instances if "Name" in vm.tags}
-            
+
             if "purged" in changes:
                 if not changes["purged"][1]: # this is a new resource, lets create it
                     listener = (resource.listen_port, resource.dest_port, resource.protocol)
                     lb = elb_conn.create_load_balancer(resource.name, [resource.iaas_config["availability_zone"]], [listener])
-                    
+
                     # set the security group
                     if resource.security_group not in security_groups:
                         raise Exception("Security group %s is not defined on IaaS" % resource.security_group)
                     elb_conn.apply_security_groups_to_lb(resource.name, security_groups[resource.security_group])
-                    
+
                     # set the instances
                     instance_list = []
                     for inst in resource.instances:
                         if inst not in vm_names:
                             LOGGER.warning("Instance %s not added to aws::ELB with name %s, because it does not exist.",
                                            inst, resource.name)
-                            
+
                         else:
                             instance_list.append(vm_names[inst])
-                    
+
                     if len(instance_list) > 0:
                         elb_conn.register_instances(resource.name, instance_list)
-                
+
                 else: # delete the loadbalancer
                     elb_conn.delete_load_balancer(resource.name)
-                
+
             else: # we need to make changes
                 if "listener" in changes:
                     listener = (resource.listen_port, resource.dest_port, resource.protocol)
                     elb_conn.create_load_balancer_listeners(resource.name, listener)
-                    
+
                 if "security_group" in changes:
                     # set the security group
                     if resource.security_group not in security_groups:
                         raise Exception("Security group %s is not defined on IaaS" % resource.security_group)
-                    
+
                     elb_conn.apply_security_groups_to_lb(resource.name, security_groups[resource.security_group])
-                    
+
                 if "instances" in changes:
                     new_instances = set(changes["instances"][1])
                     old_instances = set(changes["instances"][0])
                     add = [vm_names[vm] for vm in new_instances-old_instances if vm in vm_names]
                     remove = [vm_names[vm] for vm in old_instances-new_instances if vm in vm_names]
-                    
+
                     if len(add) > 0:
                         elb_conn.register_instances(resource.name, add)
-                        
+
                     if len(remove) > 0:
                         elb_conn.deregister_instances(resource.name, remove)
 
@@ -230,15 +230,15 @@ class ELBHandler(ResourceHandler):
         elb_conn = elb.connect_to_region(resource.iaas_config["region"],
                                          aws_access_key_id = resource.iaas_config["access_key"],
                                          aws_secret_access_key = resource.iaas_config["secret_key"])
-        
+
         all_lb = elb_conn.get_all_load_balancers()
-        
+
         the_lb = None
         for lb in all_lb:
             if lb.name == resource.name:
                 the_lb = lb
                 break
-            
+
         if the_lb is not None:
             return {"dns_name": the_lb.dns_name}
 
