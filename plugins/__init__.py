@@ -19,7 +19,7 @@
 from impera.resources import Resource, resource, ResourceNotFoundExcpetion
 from impera.agent.handler import provider, ResourceHandler
 from impera.execute.util import Unknown
-from impera.plugins.base import plugin
+from impera.plugins import plugin
 from impera.export import resource_to_id
 
 from boto import ec2, vpc
