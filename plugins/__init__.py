@@ -20,7 +20,6 @@ from impera.resources import Resource, resource, ResourceNotFoundExcpetion
 from impera.agent.handler import provider, ResourceHandler
 from impera.execute.util import Unknown
 from impera.plugins import plugin
-from impera.export import resource_to_id
 
 from boto import ec2, vpc
 from boto.ec2 import elb
@@ -39,13 +38,6 @@ boto_log.setLevel(logging.WARNING)
 @plugin
 def elbid(name: "string") -> "string":
     return re.sub("[\.]", "-", name)
-
-@resource_to_id("aws::ELB")
-def vm_to_id(resource):
-    """
-        Convert a resource to an id
-    """
-    return "aws::ELB[%s,name=%s]" % (resource.iaas.name, resource.name)
 
 
 def get_config(exporter, vm):
