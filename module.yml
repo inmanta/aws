@@ -1,8 +1,7 @@
-author: Bart Vanbrabant <bart@impera.io>
+author: Inmanta <code@inmanta.com>
 license: Apache 2.0
 name: aws
-source: git@git.impera.io:modules/aws
-version: 0.2b1
+version: '0.2'
 requires:
-    vm: git@git.impera.io:modules/vm, ">= 0.1"
-    web: git@git.impera.io:modules/web, ">= 0.1b1"
+- vm
+- web
