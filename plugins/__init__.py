@@ -58,8 +58,8 @@ class ELB(Resource):
     """
         Amazon Elastic loadbalancer
     """
-    fields = ("name", "security_group", "listen_port", "dest_port", "protocol", "iaas_config",
-              "instances")
+    fields = ("name", "security_group", "listen_port", "dest_port", "protocol", "iaas_config", "instances", "purged",
+              "purge_on_delete")
     map = {"iaas_config": get_config, "instances" : get_instances, "listen_port": lambda _, x: int(x.listen_port),
            "dest_port": lambda _, x: int(x.dest_port)}
 

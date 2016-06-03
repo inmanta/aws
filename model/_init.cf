@@ -59,12 +59,17 @@ end
 entity ELB:
     """
         An ELB load balancer
+
+        :param purged The state of the loadbalancer
+        :param purge_on_delete Purge the loadbalancer when it is no longer included in the configuration model.
     """
     string name
     string security_group="default"
     number listen_port=80
     number dest_port=80
     string protocol="http"
+    bool   purged = false
+    bool   purge_on_delete = true
 end
 
 implement ELB using std::none
