@@ -405,6 +405,8 @@ class VMHandler(ResourceHandler):
         for hostname,vm in vm_list.items():
             if hostname.find(resource.iaas_config["machine_prefix"]) == 0:
                 hostname = hostname[len(resource.iaas_config["machine_prefix"]):]
+            else:
+                continue
             key = "vm::Host[%s,name=%s]" % (resource.id.agent_name, hostname)
             facts[key] = {}
             if len(vm.interfaces) > 0:
