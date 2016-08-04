@@ -53,7 +53,7 @@ def get_instances(exporter, elb):
     return sorted([vm.name for vm in elb.instances])
 
 
-def strip_prefix(resourc, hostname):
+def strip_prefix(resource, hostname):
     if hostname.find(resource.iaas_config["machine_prefix"]) == 0:
         hostname = hostname[len(resource.iaas_config["machine_prefix"]):]
     return hostname
