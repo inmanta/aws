@@ -52,6 +52,8 @@ def get_config(exporter, vm):
 def get_instances(exporter, elb):
     return sorted([vm.name for vm in elb.instances])
 
+def has_prefix(resource, hostname):
+    return hostname.find(resource.iaas_config["machine_prefix"]) == 0
 
 def strip_prefix(resource, hostname):
     if hostname.find(resource.iaas_config["machine_prefix"]) == 0:
@@ -95,7 +97,7 @@ class ELBHandler(ResourceHandler):
                                          aws_secret_access_key = resource.iaas_config["secret_key"])
 
         loadbalancers = elb_conn.get_all_load_balancers()
-        vm_names = {vm.id: strip_prefix(resource,vm.tags["Name"]) for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags}
+        vm_names = {vm.id: strip_prefix(resource,vm.tags["Name"]) for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
 
         elb_state = {"purged" : True}
 
@@ -163,8 +165,7 @@ class ELBHandler(ResourceHandler):
                                              aws_secret_access_key = resource.iaas_config["secret_key"])
 
             security_groups = {sg.name: sg.id for sg in ec2_conn.get_all_security_groups()}
-            vm_names = {strip_prefix(resource,vm.tags["Name"]): vm.id for res in ec2_conn.get_all_instances()
-                                               for vm in res.instances if "Name" in vm.tags}
+            vm_names = {strip_prefix(resource,vm.tags["Name"]): vm.id for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
 
             if "purged" in changes:
                 if not changes["purged"][1]: # this is a new resource, lets create it
