@@ -283,10 +283,11 @@ class VMHandler(ResourceHandler):
                 else:
                     vm_list[name] = vm
 
+        resourcename = resource.iaas_config["machine_prefix"] + resource.name
 
         # how the vm doing
-        if resource.name in vm_list:
-            vm_state["vm"] = vm_list[resource.name].state
+        if resourcename in vm_list:
+            vm_state["vm"] = vm_list[resourcename].state
         else:
             vm_state["vm"] = "terminated"
 
@@ -327,6 +328,8 @@ class VMHandler(ResourceHandler):
         """
         changes = self.list_changes(resource)
 
+        resourcename = resource.iaas_config["machine_prefix"] + resource.name
+
         if len(changes) > 0:
             LOGGER.debug("Making changes to resource %s" % resource.id)
 
@@ -349,7 +352,7 @@ class VMHandler(ResourceHandler):
 
                     vm = res.instances[0]
                     conn.modify_instance_attribute(vm.id, attribute='sourceDestCheck', value=False)
-                    conn.create_tags(vm.id, {"Name" : resource.name})
+                    conn.create_tags(vm.id, {"Name" : resourcename})
 
                 elif changes["state"][1] == "terminated" and changes["state"][0] == "running":
                     reservations = conn.get_all_instances()
@@ -363,8 +366,8 @@ class VMHandler(ResourceHandler):
                                 else:
                                     vm_list[str(vm)] = vm
 
-                    if resource.name in vm_list:
-                        vm_list[resource.name].terminate()
+                    if resourcename in vm_list:
+                        vm_list[resourcename].terminate()
 
             return True
 
@@ -395,6 +398,8 @@ class VMHandler(ResourceHandler):
 
         facts = {}
         for hostname,vm in vm_list.items():
+            if hostname.find(resource.iaas_config["machine_prefix"]) == 0:
+                hostname = hostname[len(resource.iaas_config["machine_prefix"]):]
             key = "vm::Host[%s,name=%s]" % (resource.id.agent_name, hostname)
             facts[key] = {}
             if len(vm.interfaces) > 0:
