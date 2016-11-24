@@ -97,7 +97,7 @@ class ELBHandler(ResourceHandler):
                                          aws_secret_access_key = resource.iaas_config["secret_key"])
 
         loadbalancers = elb_conn.get_all_load_balancers()
-        vm_names = {vm.id: strip_prefix(resource,vm.tags["Name"]) for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
+        vm_names = {vm.id: strip_prefix(resource,vm.tags["Name"]) for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"]) and vm.state != "terminated"}
 
         elb_state = {"purged" : True}
 
@@ -165,7 +165,7 @@ class ELBHandler(ResourceHandler):
                                              aws_secret_access_key = resource.iaas_config["secret_key"])
 
             security_groups = {sg.name: sg.id for sg in ec2_conn.get_all_security_groups()}
-            vm_names = {strip_prefix(resource,vm.tags["Name"]): vm.id for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
+            vm_names = {strip_prefix(resource,vm.tags["Name"]): vm.id for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"]) and vm.state != "terminated"}
 
             if "purged" in changes:
                 if not changes["purged"][1]: # this is a new resource, lets create it
