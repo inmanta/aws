@@ -1,5 +1,5 @@
 """
-    Copyright 2016 Inmanta
+    Copyright 2017 Inmanta
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -16,9 +16,8 @@
     Contact: code@inmanta.com
 """
 
-from inmanta.resources import Resource, resource, ResourceNotFoundExcpetion
+from inmanta.resources import Resource, resource
 from inmanta.agent.handler import provider, ResourceHandler
-from inmanta.execute.util import Unknown
 from inmanta.plugins import plugin
 
 from boto import ec2, vpc
@@ -52,26 +51,29 @@ def get_config(exporter, vm):
 def get_instances(exporter, elb):
     return sorted([vm.name for vm in elb.instances])
 
+
 def has_prefix(resource, hostname):
     return hostname.find(resource.iaas_config["machine_prefix"]) == 0
+
 
 def strip_prefix(resource, hostname):
     if hostname.find(resource.iaas_config["machine_prefix"]) == 0:
         hostname = hostname[len(resource.iaas_config["machine_prefix"]):]
     return hostname
 
-@resource("aws::ELB", agent = "iaas.name", id_attribute = "name")
+
+@resource("aws::ELB", agent="iaas.name", id_attribute="name")
 class ELB(Resource):
     """
         Amazon Elastic loadbalancer
     """
     fields = ("name", "security_group", "listen_port", "dest_port", "protocol", "iaas_config", "instances", "purged",
               "purge_on_delete")
-    map = {"iaas_config": get_config, "instances" : get_instances, "listen_port": lambda _, x: int(x.listen_port),
+    map = {"iaas_config": get_config, "instances": get_instances, "listen_port": lambda _, x: int(x.listen_port),
            "dest_port": lambda _, x: int(x.dest_port)}
 
 
-@provider("aws::ELB", name = "ec2")
+@provider("aws::ELB", name="ec2")
 class ELBHandler(ResourceHandler):
     """This class manages ELB instances on amazon ec2
     """
@@ -81,7 +83,7 @@ class ELBHandler(ResourceHandler):
         """
         return "type" in resource.iaas_config and resource.iaas_config["type"] == "aws"
 
-    def check_resource(self, resource):
+    def check_resource(self, ctx, resource):
         """
             This method will check what the status of the give resource is on
             openstack.
@@ -89,17 +91,18 @@ class ELBHandler(ResourceHandler):
         LOGGER.debug("Checking state of resource %s" % resource)
 
         ec2_conn = ec2.connect_to_region(resource.iaas_config["region"],
-                                         aws_access_key_id = resource.iaas_config["access_key"],
-                                         aws_secret_access_key = resource.iaas_config["secret_key"])
+                                         aws_access_key_id=resource.iaas_config["access_key"],
+                                         aws_secret_access_key=resource.iaas_config["secret_key"])
 
         elb_conn = elb.connect_to_region(resource.iaas_config["region"],
-                                         aws_access_key_id = resource.iaas_config["access_key"],
-                                         aws_secret_access_key = resource.iaas_config["secret_key"])
+                                         aws_access_key_id=resource.iaas_config["access_key"],
+                                         aws_secret_access_key=resource.iaas_config["secret_key"])
 
         loadbalancers = elb_conn.get_all_load_balancers()
-        vm_names = {vm.id: strip_prefix(resource,vm.tags["Name"]) for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
+        vm_names = {vm.id: strip_prefix(resource, vm.tags["Name"]) for res in ec2_conn.get_all_instances()
+                    for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
 
-        elb_state = {"purged" : True}
+        elb_state = {"purged": True}
 
         for lb in loadbalancers:
             if lb.name == resource.name:
@@ -128,11 +131,11 @@ class ELBHandler(ResourceHandler):
 
         return elb_state
 
-    def list_changes(self, resource):
+    def list_changes(self, ctx, resource):
         """
             List the changes that are required to the vm
         """
-        elb_state = self.check_resource(resource)
+        elb_state = self.check_resource(ctx, resource)
         LOGGER.debug("Determining changes required to resource %s" % resource.id)
 
         changes = {}
@@ -148,29 +151,28 @@ class ELBHandler(ResourceHandler):
 
         return changes
 
-    def do_changes(self, resource):
+    def do_changes(self, ctx, resource, changes):
         """
             Enact the changes
         """
-        changes = self.list_changes(resource)
-
         if len(changes) > 0:
             LOGGER.debug("Making changes to resource %s" % resource.id)
             ec2_conn = ec2.connect_to_region(resource.iaas_config["region"],
-                                             aws_access_key_id = resource.iaas_config["access_key"],
-                                             aws_secret_access_key = resource.iaas_config["secret_key"])
+                                             aws_access_key_id=resource.iaas_config["access_key"],
+                                             aws_secret_access_key=resource.iaas_config["secret_key"])
 
             elb_conn = elb.connect_to_region(resource.iaas_config["region"],
-                                             aws_access_key_id = resource.iaas_config["access_key"],
-                                             aws_secret_access_key = resource.iaas_config["secret_key"])
+                                             aws_access_key_id=resource.iaas_config["access_key"],
+                                             aws_secret_access_key=resource.iaas_config["secret_key"])
 
             security_groups = {sg.name: sg.id for sg in ec2_conn.get_all_security_groups()}
-            vm_names = {strip_prefix(resource,vm.tags["Name"]): vm.id for res in ec2_conn.get_all_instances() for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
+            vm_names = {strip_prefix(resource, vm.tags["Name"]): vm.id for res in ec2_conn.get_all_instances()
+                        for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
 
             if "purged" in changes:
-                if not changes["purged"][1]: # this is a new resource, lets create it
+                if not changes["purged"][1]:  # this is a new resource, lets create it
                     listener = (resource.listen_port, resource.dest_port, resource.protocol)
-                    lb = elb_conn.create_load_balancer(resource.name, [resource.iaas_config["availability_zone"]], [listener])
+                    elb_conn.create_load_balancer(resource.name, [resource.iaas_config["availability_zone"]], [listener])
 
                     # set the security group
                     if resource.security_group not in security_groups:
@@ -190,10 +192,10 @@ class ELBHandler(ResourceHandler):
                     if len(instance_list) > 0:
                         elb_conn.register_instances(resource.name, instance_list)
 
-                else: # delete the loadbalancer
+                else:  # delete the loadbalancer
                     elb_conn.delete_load_balancer(resource.name)
 
-            else: # we need to make changes
+            else:  # we need to make changes
                 if "listener" in changes:
                     listener = (resource.listen_port, resource.dest_port, resource.protocol)
                     elb_conn.create_load_balancer_listeners(resource.name, listener)
@@ -208,8 +210,8 @@ class ELBHandler(ResourceHandler):
                 if "instances" in changes:
                     new_instances = set(changes["instances"][1])
                     old_instances = set(changes["instances"][0])
-                    add = [vm_names[vm] for vm in new_instances-old_instances if vm in vm_names]
-                    remove = [vm_names[vm] for vm in old_instances-new_instances if vm in vm_names]
+                    add = [vm_names[vm] for vm in new_instances - old_instances if vm in vm_names]
+                    remove = [vm_names[vm] for vm in old_instances - new_instances if vm in vm_names]
 
                     if len(add) > 0:
                         elb_conn.register_instances(resource.name, add)
@@ -219,15 +221,15 @@ class ELBHandler(ResourceHandler):
 
             return True
 
-    def facts(self, resource):
+    def facts(self, ctx, resource):
         """
             Get facts about this resource
         """
         LOGGER.debug("Finding facts for %s" % resource.id.resource_str())
 
         elb_conn = elb.connect_to_region(resource.iaas_config["region"],
-                                         aws_access_key_id = resource.iaas_config["access_key"],
-                                         aws_secret_access_key = resource.iaas_config["secret_key"])
+                                         aws_access_key_id=resource.iaas_config["access_key"],
+                                         aws_secret_access_key=resource.iaas_config["secret_key"])
 
         all_lb = elb_conn.get_all_load_balancers()
 
@@ -243,17 +245,17 @@ class ELBHandler(ResourceHandler):
         return {}
 
 
-@provider("vm::Host", name = "ec2")
+@provider("vm::Host", name="ec2")
 class VMHandler(ResourceHandler):
     """
         This class manages vm::Host on amazon ec2
     """
     vm_types = ["m1.small", "m1.medium", "m1.large", "m1.xlarge", "m3.medium", "m3.large",
-        "m3.xlarge", "m3.2xlarge", "c1.medium", "c1.xlarge", "c3.large", "c3.xlarge", "c3.2xlarge",
-        "c3.4xlarge", "c3.8xlarge", "cc2.8xlarge", "m2.xlarge", "m2.2xlarge", "m2.4xlarge", "r3.large"
-        "r3.xlarge", "r3.2xlarge", "r3.4xlarge", "r3.8xlarge", "cr1.8xlarge", "hi1.4xlarge",
-        "hs1.8xlarge", "i2.xlarge", "i2.2xlarge", "i2.4xlarge", "i2.8xlarge", "t1.micro",
-        "cg1.4xlarge", "g2.2xlarge", "t2.micro", "t2.small", "t2.medium"]
+                "m3.xlarge", "m3.2xlarge", "c1.medium", "c1.xlarge", "c3.large", "c3.xlarge", "c3.2xlarge",
+                "c3.4xlarge", "c3.8xlarge", "cc2.8xlarge", "m2.xlarge", "m2.2xlarge", "m2.4xlarge", "r3.large"
+                "r3.xlarge", "r3.2xlarge", "r3.4xlarge", "r3.8xlarge", "cr1.8xlarge", "hi1.4xlarge",
+                "hs1.8xlarge", "i2.xlarge", "i2.2xlarge", "i2.4xlarge", "i2.8xlarge", "t1.micro",
+                "cg1.4xlarge", "g2.2xlarge", "t2.micro", "t2.small", "t2.medium"]
 
     def available(self, resource):
         """
@@ -261,7 +263,7 @@ class VMHandler(ResourceHandler):
         """
         return "type" in resource.iaas_config and resource.iaas_config["type"] == "aws"
 
-    def check_resource(self, resource):
+    def check_resource(self, ctx, resource):
         """
             This method will check what the status of the give resource is on
             openstack.
@@ -269,8 +271,8 @@ class VMHandler(ResourceHandler):
         LOGGER.debug("Checking state of resource %s" % resource)
 
         conn = ec2.connect_to_region(resource.iaas_config["region"],
-                    aws_access_key_id = resource.iaas_config["access_key"],
-                    aws_secret_access_key = resource.iaas_config["secret_key"])
+                                     aws_access_key_id=resource.iaas_config["access_key"],
+                                     aws_secret_access_key=resource.iaas_config["secret_key"])
 
         vm_state = {}
 
@@ -307,11 +309,11 @@ class VMHandler(ResourceHandler):
 
         return vm_state
 
-    def list_changes(self, resource):
+    def list_changes(self, ctx, resource):
         """
             List the changes that are required to the vm
         """
-        vm_state = self.check_resource(resource)
+        vm_state = self.check_resource(ctx, resource)
         LOGGER.debug("Determining changes required to resource %s" % resource.id)
 
         changes = {}
@@ -328,20 +330,18 @@ class VMHandler(ResourceHandler):
 
         return changes
 
-    def do_changes(self, resource):
+    def do_changes(self, ctx, resource, changes):
         """
             Enact the changes
         """
-        changes = self.list_changes(resource)
-
         resourcename = resource.iaas_config["machine_prefix"] + resource.name
 
         if len(changes) > 0:
             LOGGER.debug("Making changes to resource %s" % resource.id)
 
             conn = ec2.connect_to_region(resource.iaas_config["region"],
-                    aws_access_key_id = resource.iaas_config["access_key"],
-                    aws_secret_access_key = resource.iaas_config["secret_key"])
+                                         aws_access_key_id=resource.iaas_config["access_key"],
+                                         aws_secret_access_key=resource.iaas_config["secret_key"])
 
             if "key" in changes:
                 conn.import_key_pair(changes["key"][0], changes["key"][1].encode())
@@ -358,7 +358,7 @@ class VMHandler(ResourceHandler):
 
                     vm = res.instances[0]
                     conn.modify_instance_attribute(vm.id, attribute='sourceDestCheck', value=False)
-                    conn.create_tags(vm.id, {"Name" : resourcename})
+                    conn.create_tags(vm.id, {"Name": resourcename})
 
                 elif changes["state"][1] == "terminated" and changes["state"][0] == "running":
                     reservations = conn.get_all_instances()
@@ -377,19 +377,19 @@ class VMHandler(ResourceHandler):
 
             return True
 
-    def facts(self, resource):
+    def facts(self, ctx, resource):
         """
             Get facts about this resource
         """
         LOGGER.debug("Finding facts for %s" % resource.id.resource_str())
 
         conn = ec2.connect_to_region(resource.iaas_config["region"],
-            aws_access_key_id = resource.iaas_config["access_key"],
-            aws_secret_access_key = resource.iaas_config["secret_key"])
+                                     aws_access_key_id=resource.iaas_config["access_key"],
+                                     aws_secret_access_key=resource.iaas_config["secret_key"])
 
         vpc_conn = vpc.connect_to_region(resource.iaas_config["region"],
-            aws_access_key_id = resource.iaas_config["access_key"],
-            aws_secret_access_key = resource.iaas_config["secret_key"])
+                                         aws_access_key_id=resource.iaas_config["access_key"],
+                                         aws_secret_access_key=resource.iaas_config["secret_key"])
 
         reservations = conn.get_all_instances()
         vm_list = {}
@@ -403,7 +403,7 @@ class VMHandler(ResourceHandler):
                         vm_list[str(vm)] = vm
 
         facts = {}
-        for hostname,vm in vm_list.items():
+        for hostname, vm in vm_list.items():
             if hostname.find(resource.iaas_config["machine_prefix"]) == 0:
                 hostname = hostname[len(resource.iaas_config["machine_prefix"]):]
             else:

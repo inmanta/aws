@@ -1,7 +1,5 @@
 author: Inmanta <code@inmanta.com>
 license: Apache 2.0
 name: aws
-version: 0.2.7
-requires:
-- vm
-- web
+version: 0.3.0
+compiler_version: 2017.1
