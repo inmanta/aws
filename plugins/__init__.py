@@ -16,22 +16,25 @@
     Contact: code@inmanta.com
 """
 
-from inmanta.resources import Resource, resource
-from inmanta.agent.handler import provider, ResourceHandler
+from inmanta.resources import resource, PurgeableResource, ManagedResource, Resource
+from inmanta.agent.handler import provider, ResourceHandler, CRUDHandler, HandlerContext, ResourcePurged, SkipResource
 from inmanta.plugins import plugin
+from inmanta import const
 
-from boto import ec2, vpc
-from boto.ec2 import elb
+import boto3
 
 import logging
 import re
 import json
+import botocore
 
 LOGGER = logging.getLogger(__name__)
 
 # Silence boto
-boto_log = logging.getLogger("boto")
+boto_log = logging.getLogger("boto3")
 boto_log.setLevel(logging.WARNING)
+boto_log2 = logging.getLogger("botocore")
+boto_log2.setLevel(logging.WARNING)
 
 
 @plugin
@@ -52,382 +55,283 @@ def get_instances(exporter, elb):
     return sorted([vm.name for vm in elb.instances])
 
 
-def has_prefix(resource, hostname):
-    return hostname.find(resource.iaas_config["machine_prefix"]) == 0
+class AWSResource(PurgeableResource, ManagedResource):
+    fields = ("provider",)
+
+    @staticmethod
+    def get_provider(_, resource):
+        return {"region": resource.provider.region, "availability_zone": resource.provider.availability_zone,
+                "access_key": resource.provider.access_key, "secret_key": resource.provider.secret_key}
 
 
-def strip_prefix(resource, hostname):
-    if hostname.find(resource.iaas_config["machine_prefix"]) == 0:
-        hostname = hostname[len(resource.iaas_config["machine_prefix"]):]
-    return hostname
-
-
-@resource("aws::ELB", agent="iaas.name", id_attribute="name")
-class ELB(Resource):
+@resource("aws::ELB", agent="provider.name", id_attribute="name")
+class ELB(AWSResource):
     """
         Amazon Elastic loadbalancer
     """
-    fields = ("name", "security_group", "listen_port", "dest_port", "protocol", "iaas_config", "instances", "purged",
-              "purge_on_delete")
-    map = {"iaas_config": get_config, "instances": get_instances, "listen_port": lambda _, x: int(x.listen_port),
-           "dest_port": lambda _, x: int(x.dest_port)}
+    fields = ("name", "security_group", "listen_port", "dest_port", "protocol", "instances")
+
+    @staticmethod
+    def get_instances(exporter, elb):
+        return sorted([vm.name for vm in elb.instances])
+
+
+@resource("aws::VirtualMachine", agent="provider.name", id_attribute="name")
+class VirtualMachine(AWSResource):
+    fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check")
+
+    @staticmethod
+    def get_key_name(_, resource):
+        return resource.public_key.name
+
+    @staticmethod
+    def get_key_value(_, resource):
+        return resource.public_key.public_key
+
+
+class AWSHandler(CRUDHandler):
+    def __init__(self, agent, io=None) -> None:
+        CRUDHandler.__init__(self, agent, io=io)
+
+        self._session = None
+        self._ec2 = None
+        self._elb = None
+
+    def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
+        CRUDHandler.pre(self, ctx, resource)
+
+        self._session = boto3.Session(region_name=resource.provider["region"],
+                                      aws_access_key_id=resource.provider["access_key"],
+                                      aws_secret_access_key=resource.provider["secret_key"])
+        self._ec2 = self._session.resource("ec2")
+        self._elb = self._session.client("elb")
+
+    def post(self, ctx: HandlerContext, resource: AWSResource) -> None:
+        CRUDHandler.post(self, ctx, resource)
+
+        self._ec2 = None
+        self._elb = None
 
 
 @provider("aws::ELB", name="ec2")
-class ELBHandler(ResourceHandler):
-    """This class manages ELB instances on amazon ec2
+class ELBHandler(AWSHandler):
     """
-    def available(self, resource):
-        """
-            This handler is available to all elb's that have type set to aws in their iaas_config.
-        """
-        return "type" in resource.iaas_config and resource.iaas_config["type"] == "aws"
-
-    def check_resource(self, ctx, resource):
-        """
-            This method will check what the status of the give resource is on
-            openstack.
-        """
-        LOGGER.debug("Checking state of resource %s" % resource)
-
-        ec2_conn = ec2.connect_to_region(resource.iaas_config["region"],
-                                         aws_access_key_id=resource.iaas_config["access_key"],
-                                         aws_secret_access_key=resource.iaas_config["secret_key"])
-
-        elb_conn = elb.connect_to_region(resource.iaas_config["region"],
-                                         aws_access_key_id=resource.iaas_config["access_key"],
-                                         aws_secret_access_key=resource.iaas_config["secret_key"])
-
-        loadbalancers = elb_conn.get_all_load_balancers()
-        vm_names = {vm.id: strip_prefix(resource, vm.tags["Name"]) for res in ec2_conn.get_all_instances()
-                    for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
-
-        elb_state = {"purged": True}
-
-        for lb in loadbalancers:
-            if lb.name == resource.name:
-                elb_state["purged"] = False
-                elb_state["instances"] = sorted([vm_names[x.id] for x in lb.instances if x.id in vm_names])
-                if len(lb.listeners) > 0:
-                    if len(lb.listeners) > 1:
-                        LOGGER.warning("This handler does not support multiple listeners! Using the first one.")
-                    lst = lb.listeners[0]
-                    elb_state["listen_port"] = lst[0]
-                    elb_state["dst_port"] = lst[1]
-                    elb_state["protocol"] = lst[2].lower()
-
-                security_groups = {sg.id: sg.name for sg in ec2_conn.get_all_security_groups()}
-
-                if len(lb.security_groups) > 0:
-                    if len(lb.security_groups) > 1:
-                        LOGGER.warning("This handler does not support multiple security groups.")
-
-                    sg = lb.security_groups[0]
-                    if sg in security_groups:
-                        elb_state["security_group"] = security_groups[sg]
-
-                    else:
-                        raise Exception("Invalid amazon response, security group is used but not defined?!?")
-
-        return elb_state
-
-    def list_changes(self, ctx, resource):
-        """
-            List the changes that are required to the vm
-        """
-        elb_state = self.check_resource(ctx, resource)
-        LOGGER.debug("Determining changes required to resource %s" % resource.id)
-
-        changes = {}
-        for key, value in elb_state.items():
-            if hasattr(resource, key):
-                desired_value = getattr(resource, key)
-                if desired_value != value:
-                    changes[key] = (value, desired_value)
-
-            elif key == "purged":
-                if elb_state["purged"]:
-                    changes["purged"] = (True, False)
-
-        return changes
-
-    def do_changes(self, ctx, resource, changes):
-        """
-            Enact the changes
-        """
-        if len(changes) > 0:
-            LOGGER.debug("Making changes to resource %s" % resource.id)
-            ec2_conn = ec2.connect_to_region(resource.iaas_config["region"],
-                                             aws_access_key_id=resource.iaas_config["access_key"],
-                                             aws_secret_access_key=resource.iaas_config["secret_key"])
-
-            elb_conn = elb.connect_to_region(resource.iaas_config["region"],
-                                             aws_access_key_id=resource.iaas_config["access_key"],
-                                             aws_secret_access_key=resource.iaas_config["secret_key"])
-
-            security_groups = {sg.name: sg.id for sg in ec2_conn.get_all_security_groups()}
-            vm_names = {strip_prefix(resource, vm.tags["Name"]): vm.id for res in ec2_conn.get_all_instances()
-                        for vm in res.instances if "Name" in vm.tags and has_prefix(resource, vm.tags["Name"])}
-
-            if "purged" in changes:
-                if not changes["purged"][1]:  # this is a new resource, lets create it
-                    listener = (resource.listen_port, resource.dest_port, resource.protocol)
-                    elb_conn.create_load_balancer(resource.name, [resource.iaas_config["availability_zone"]], [listener])
-
-                    # set the security group
-                    if resource.security_group not in security_groups:
-                        raise Exception("Security group %s is not defined on IaaS" % resource.security_group)
-                    elb_conn.apply_security_groups_to_lb(resource.name, security_groups[resource.security_group])
-
-                    # set the instances
-                    instance_list = []
-                    for inst in resource.instances:
-                        if inst not in vm_names:
-                            LOGGER.warning("Instance %s not added to aws::ELB with name %s, because it does not exist.",
-                                           inst, resource.name)
-
-                        else:
-                            instance_list.append(vm_names[inst])
-
-                    if len(instance_list) > 0:
-                        elb_conn.register_instances(resource.name, instance_list)
-
-                else:  # delete the loadbalancer
-                    elb_conn.delete_load_balancer(resource.name)
-
-            else:  # we need to make changes
-                if "listener" in changes:
-                    listener = (resource.listen_port, resource.dest_port, resource.protocol)
-                    elb_conn.create_load_balancer_listeners(resource.name, listener)
-
-                if "security_group" in changes:
-                    # set the security group
-                    if resource.security_group not in security_groups:
-                        raise Exception("Security group %s is not defined on IaaS" % resource.security_group)
-
-                    elb_conn.apply_security_groups_to_lb(resource.name, security_groups[resource.security_group])
-
-                if "instances" in changes:
-                    new_instances = set(changes["instances"][1])
-                    old_instances = set(changes["instances"][0])
-                    add = [vm_names[vm] for vm in new_instances - old_instances if vm in vm_names]
-                    remove = [vm_names[vm] for vm in old_instances - new_instances if vm in vm_names]
-
-                    if len(add) > 0:
-                        elb_conn.register_instances(resource.name, add)
-
-                    if len(remove) > 0:
-                        elb_conn.deregister_instances(resource.name, remove)
-
-            return True
-
-    def facts(self, ctx, resource):
-        """
-            Get facts about this resource
-        """
-        LOGGER.debug("Finding facts for %s" % resource.id.resource_str())
-
-        elb_conn = elb.connect_to_region(resource.iaas_config["region"],
-                                         aws_access_key_id=resource.iaas_config["access_key"],
-                                         aws_secret_access_key=resource.iaas_config["secret_key"])
-
-        all_lb = elb_conn.get_all_load_balancers()
-
-        the_lb = None
-        for lb in all_lb:
-            if lb.name == resource.name:
-                the_lb = lb
-                break
-
-        if the_lb is not None:
-            return {"dns_name": the_lb.dns_name}
-
-        return {}
-
-
-@provider("vm::Host", name="ec2")
-class VMHandler(ResourceHandler):
+        This class manages ELB instances on amazon ec2
     """
-        This class manages vm::Host on amazon ec2
-    """
-    vm_types = ["m1.small", "m1.medium", "m1.large", "m1.xlarge", "m3.medium", "m3.large",
-                "m3.xlarge", "m3.2xlarge", "c1.medium", "c1.xlarge", "c3.large", "c3.xlarge", "c3.2xlarge",
-                "c3.4xlarge", "c3.8xlarge", "cc2.8xlarge", "m2.xlarge", "m2.2xlarge", "m2.4xlarge", "r3.large"
-                "r3.xlarge", "r3.2xlarge", "r3.4xlarge", "r3.8xlarge", "cr1.8xlarge", "hi1.4xlarge",
-                "hs1.8xlarge", "i2.xlarge", "i2.2xlarge", "i2.4xlarge", "i2.8xlarge", "t1.micro",
-                "cg1.4xlarge", "g2.2xlarge", "t2.micro", "t2.small", "t2.medium"]
+    def _get_name(self, vm):
+        tags = vm.tags if vm.tags is not None else []
+        for tag in tags:
+            if tag["Key"] == "Name":
+                return tag["Value"]
 
-    def available(self, resource):
-        """
-            This handler is available to all virtual machines that have type set to aws in their iaas_config.
-        """
-        return "type" in resource.iaas_config and resource.iaas_config["type"] == "aws"
+        return vm.instance_id
 
-    def check_resource(self, ctx, resource):
-        """
-            This method will check what the status of the give resource is on
-            openstack.
-        """
-        LOGGER.debug("Checking state of resource %s" % resource)
+    def _get_security_group(self, security_groups, name):
+        for sg in security_groups.values():
+            if sg.group_name == name:
+                return sg.id
 
-        conn = ec2.connect_to_region(resource.iaas_config["region"],
-                                     aws_access_key_id=resource.iaas_config["access_key"],
-                                     aws_secret_access_key=resource.iaas_config["secret_key"])
+        return None
 
-        vm_state = {}
+    def read_resource(self, ctx, resource: ELB):
+        vms = {self._get_name(x): x for x in self._ec2.instances.all()}
+        vm_ids = {x.id: x for x in vms.values()}
+        security_groups = {sg.id: sg for sg in self._ec2.security_groups.all()}
 
-        reservations = conn.get_all_instances()
-        vm_list = {}
-        for res in reservations:
-            for vm in res.instances:
-                name = str(vm)
+        ctx.set("vms", vms)
+        ctx.set("security_groups", security_groups)
 
-                if "Name" in vm.tags:
-                    name = vm.tags["Name"]
+        try:
+            loadbalancer = self._elb.describe_load_balancers(LoadBalancerNames=[resource.name])["LoadBalancerDescriptions"][0]
+        except botocore.exceptions.ClientError:
+            raise ResourcePurged()
 
-                if name in vm_list:
-                    if vm.state != "terminated":
-                        vm_list[name] = vm
-                else:
-                    vm_list[name] = vm
+        resource.purged = False
+        resource.instances = sorted(self._get_name(vm_ids[x["InstanceId"]]) for x in loadbalancer["Instances"])
 
-        resourcename = resource.iaas_config["machine_prefix"] + resource.name
+        if len(loadbalancer["ListenerDescriptions"]) > 0:
+            if len(loadbalancer["ListenerDescriptions"]) > 1:
+                ctx.warning("This handler does not support multiple listeners! Using the first one.")
+            lb = loadbalancer["ListenerDescriptions"][0]["Listener"]
+            resource.listen_port = lb["LoadBalancerPort"]
+            resource.dst_port = lb["InstancePort"]
+            resource.protocol = lb["Protocol"]
 
-        # how the vm doing
-        if resourcename in vm_list:
-            vm_state["vm"] = vm_list[resourcename].state
-        else:
-            vm_state["vm"] = "terminated"
+        if len(loadbalancer["SecurityGroups"]) > 0:
+            if len(loadbalancer["SecurityGroups"]) > 1:
+                ctx.warning("This handler does not support multiple security groups. Only using the first one")
 
-        # check if the key is there
-        vm_state["key"] = False
-        for k in conn.get_all_key_pairs():
-            if resource.key_name == k.name:
-                vm_state["key"] = True
-
-        # TODO: also check the key itself
-
-        return vm_state
-
-    def list_changes(self, ctx, resource):
-        """
-            List the changes that are required to the vm
-        """
-        vm_state = self.check_resource(ctx, resource)
-        LOGGER.debug("Determining changes required to resource %s" % resource.id)
-
-        changes = {}
-
-        if not vm_state["key"]:
-            changes["key"] = (resource.key_name, resource.key_value)
-
-        purged = "running"
-        if resource.purged:
-            purged = "terminated"
-
-        if vm_state["vm"] != purged:
-            changes["state"] = (vm_state["vm"], purged)
-
-        return changes
-
-    def do_changes(self, ctx, resource, changes):
-        """
-            Enact the changes
-        """
-        resourcename = resource.iaas_config["machine_prefix"] + resource.name
-
-        if len(changes) > 0:
-            LOGGER.debug("Making changes to resource %s" % resource.id)
-
-            conn = ec2.connect_to_region(resource.iaas_config["region"],
-                                         aws_access_key_id=resource.iaas_config["access_key"],
-                                         aws_secret_access_key=resource.iaas_config["secret_key"])
-
-            if "key" in changes:
-                conn.import_key_pair(changes["key"][0], changes["key"][1].encode())
-            if "state" in changes:
-                if changes["state"][0] == "terminated" and changes["state"][1] == "running":
-                    if resource.flavor not in VMHandler.vm_types:
-                        raise Exception("Flavor %s does not exist for vm %s" % (resource.flavor, resource))
-
-                    res = conn.run_instances(image_id=resource.image, instance_type=resource.flavor,
-                                             key_name=resource.key_name,
-                                             user_data=resource.user_data.encode(),
-                                             placement=resource.iaas_config["availability_zone"],
-                                             subnet_id=resource.network)
-
-                    vm = res.instances[0]
-                    conn.modify_instance_attribute(vm.id, attribute='sourceDestCheck', value=False)
-                    conn.create_tags(vm.id, {"Name": resourcename})
-
-                elif changes["state"][1] == "terminated" and changes["state"][0] == "running":
-                    reservations = conn.get_all_instances()
-                    vm_list = {}
-                    for res in reservations:
-                        for vm in res.instances:
-                            if vm.state == "running":
-                                if "Name" in vm.tags:
-                                    vm_list[vm.tags["Name"]] = vm
-
-                                else:
-                                    vm_list[str(vm)] = vm
-
-                    if resourcename in vm_list:
-                        vm_list[resourcename].terminate()
-
-            return True
-
-    def facts(self, ctx, resource):
-        """
-            Get facts about this resource
-        """
-        LOGGER.debug("Finding facts for %s" % resource.id.resource_str())
-
-        conn = ec2.connect_to_region(resource.iaas_config["region"],
-                                     aws_access_key_id=resource.iaas_config["access_key"],
-                                     aws_secret_access_key=resource.iaas_config["secret_key"])
-
-        vpc_conn = vpc.connect_to_region(resource.iaas_config["region"],
-                                         aws_access_key_id=resource.iaas_config["access_key"],
-                                         aws_secret_access_key=resource.iaas_config["secret_key"])
-
-        reservations = conn.get_all_instances()
-        vm_list = {}
-        for res in reservations:
-            for vm in res.instances:
-                if vm.state == "running":
-                    if "Name" in vm.tags:
-                        vm_list[vm.tags["Name"]] = vm
-
-                    else:
-                        vm_list[str(vm)] = vm
-
-        facts = {}
-        for hostname, vm in vm_list.items():
-            if hostname.find(resource.iaas_config["machine_prefix"]) == 0:
-                hostname = hostname[len(resource.iaas_config["machine_prefix"]):]
+            sg = loadbalancer["SecurityGroups"][0]
+            if sg in security_groups:
+                resource.security_group = security_groups[sg].group_name
             else:
-                continue
-            key = "vm::Host[%s,name=%s]" % (resource.id.agent_name, hostname)
-            facts[key] = {}
-            if len(vm.interfaces) > 0:
-                iface = vm.interfaces[0]
+                raise Exception("Invalid amazon response, a security group is used by the loadbalancer but not defined?!?")
 
-                facts[key]["mac_address"] = iface.mac_address
-                facts[key]["ip_address"] = iface.private_ip_address
-                facts[key]["public_ip"] = vm.ip_address
+    def create_resource(self, ctx: HandlerContext, resource: ELB) -> None:
+        sg_id = self._get_security_group(ctx.get("security_groups"), resource.security_group)
+        ctx.debug("Creating loadbalancer with security group %(sg)s", sg=sg_id)
+        if sg_id is None:
+            raise Exception("Security group %s is not defined at AWS" % resource.security_group)
 
-                subnets = vpc_conn.get_all_subnets(iface.subnet_id)
-                if len(subnets) > 0:
-                    subnet = subnets[0]
+        self._elb.create_load_balancer(LoadBalancerName=resource.name,
+                                       Listeners=[{'Protocol': resource.protocol, 'LoadBalancerPort': resource.listen_port,
+                                                   'InstanceProtocol': resource.protocol, 'InstancePort': resource.dest_port}],
+                                       AvailabilityZones=[resource.provider["region"] + resource.provider["availability_zone"]],
+                                       SecurityGroups=[sg_id])
 
-                    facts[key]["cidr"] = subnet.cidr_block
+        # register instances
+        vms = ctx.get("vms")
+        instance_list = []
+        for inst in resource.instances:
+            if inst not in vms:
+                ctx.warning("Instance %(instance)s not added to aws::ELB %(elb)s, because it does not exist.",
+                            instances=inst.id, elb=resource.name)
+            else:
+                instance_list.append({"InstanceId": vms[inst].id})
 
-                    from iplib import CIDR
-                    o = CIDR(facts[key]["cidr"])
+        if len(instance_list) > 0:
+            self._elb.register_instances_with_load_balancer(LoadBalancerName=resource.name, Instances=instance_list)
 
-                    facts[key]["netmask"] = str(o.nm)
+        ctx.set_created()
 
-        if resource.id.resource_str() in facts:
-            return facts[resource.id.resource_str()]
-        return {}
+    def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        self._elb.delete_load_balancer(LoadBalancerName=resource.name)
+        ctx.set_purged()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
+        vms = ctx.get("vms")
+
+        if "instances" in changes:
+            new_instances = set(changes["instances"]["desired"])
+            old_instances = set(changes["instances"]["current"])
+            add = [vms[vm].id for vm in new_instances - old_instances if vm in vms]
+            remove = [vms[vm].id for vm in old_instances - new_instances if vm in vms]
+
+            if len(add) > 0:
+                self._elb.register_instances_with_load_balancer(LoadBalancerName=resource.name,
+                                                                Instances=[{"InstanceId": x} for x in add])
+
+            if len(remove) > 0:
+                self._elb.deregister_instances_from_load_balancer(LoadBalancerName=resource.name,
+                                                                Instances=[{"InstanceId": x} for x in remove])
+
+        if "security_group" in changes:
+            # set the security group
+            sg_id = self._get_security_group(ctx.get("security_groups"), resource.security_group)
+            ctx.debug("Change loadbalancer with security group %(sg)s", sg=sg_id)
+            if sg_id is None:
+                raise Exception("Security group %s is not defined at AWS" % resource.security_group)
+
+            self._elb.apply_security_groups_to_load_balancer(LoadBalancerName=resource.name, SecurityGroups=[sg_id])
+
+        if "listener" in changes:
+            self._elb.create_load_balancer_listeners(LoadBalancerName='string',
+                                                     Listeners=[{'Protocol': resource.protocol,
+                                                                 'LoadBalancerPort': resource.listen_port,
+                                                                 'InstanceProtocol': resource.protocol,
+                                                                 'InstancePort': resource.dest_port}])
+
+            self._elb.delete_load_balancer_listeners(LoadBalancerName='string', LoadBalancerPorts=[resource.listen_port])
+
+    def facts(self, ctx, resource):
+        try:
+            loadbalancer = self._elb.describe_load_balancers(LoadBalancerNames=[resource.name])["LoadBalancerDescriptions"][0]
+            return {"dns_name": loadbalancer["DNSName"]}
+        except botocore.exceptions.ClientError:
+            return {}
+
+
+@provider("aws::VirtualMachine", name="ec2")
+class VirtualMachineHandler(AWSHandler):
+    def read_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        key_pairs = list(self._ec2.key_pairs.filter(Filters=[{"Name": "key-name", "Values": [resource.key_name]}]))
+        if len(key_pairs) == 0:
+            ctx.set("key", None)
+        elif len(key_pairs) > 1:
+            ctx.info("Multiple keys with name %(name)s already deployed", name=resource.key_name)
+            raise SkipResource()
+        else:
+            ctx.set("key", True)
+
+        instance = [x for x in self._ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}])
+                    if x.state["Name"] != "terminated"]
+        if len(instance) == 0:
+            raise ResourcePurged()
+
+        elif len(instance) > 1:
+            ctx.info("Found more than one instance with tag Name %(name)s", name=resource.name, instances=instance)
+            raise SkipResource()
+
+        instance = instance[0]
+        ctx.set("instance", instance)
+        resource.purged = False
+        resource.flavor = instance.instance_type
+        resource.image = instance.image_id
+        resource.key_name = instance.key_name
+
+        if instance.state["Name"] == "terminated":
+            resource.purged = True
+            return
+
+        # these do not work on terminated instances
+        result = instance.describe_attribute(Attribute="sourceDestCheck")
+        resource.source_dest_check = result["SourceDestCheck"]["Value"]
+
+
+    def _ensure_key(self, ctx: HandlerContext, key_name, key_value):
+        self._ec2.import_key_pair(KeyName=key_name, PublicKeyMaterial=key_value.encode())
+
+    def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        if not ctx.get("key"):
+            self._ensure_key(ctx, resource.key_name, resource.key_value)
+
+        instances = self._ec2.create_instances(ImageId=resource.image, KeyName=resource.key_name, UserData=resource.user_data,
+                                              InstanceType=resource.flavor, SubnetId=resource.subnet_id,
+                                              Placement={'AvailabilityZone': resource.provider["region"] +
+                                                         resource.provider["availability_zone"]},
+                                              MinCount=1, MaxCount=1)
+        if len(instances) != 1:
+            ctx.set_status(const.ResourceState.failed)
+            ctx.error("Requested one instance but do not receive it.", instances=instances)
+            return
+
+        instance = instances[0]
+        instance.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+
+        if not resource.source_dest_check:
+            instance.modify_attribute(Attribute="sourceDestCheck", Value="False")
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
+        raise SkipResource("Modifying a running instance is not supported.")
+
+    def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        instance = ctx.get("instance")
+        instance.terminate()
+
+    def facts(self, ctx, resource):
+        facts = {}
+
+        instance = list(self._ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}]))
+        if len(instance) == 0:
+            return {}
+
+        elif len(instance) > 1:
+            ctx.info("Found more than one instance with tag Name %(name)s", name=resource.name, instances=instance)
+            raise SkipResource()
+
+        instance = instance[0]
+
+        # find eth0
+        iface = None
+        for i in instance.network_interfaces_attribute:
+            if i["Attachment"]["DeviceIndex"] == 0:
+                iface = i
+
+        if iface is None:
+            return facts
+
+        facts["mac_address"] = iface["MacAddress"]
+        facts["ip_address"] = iface["PrivateIpAddress"]
+        facts["public_ip"] = instance.public_ip_address
+
+        return facts

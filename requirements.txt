@@ -1,2 +1,1 @@
-boto
-git+https://github.com/bartv/python3-iplib
+boto3

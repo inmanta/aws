@@ -15,49 +15,26 @@
 
     Contact: code@inmanta.com
 """
-import vm
 import web
+import ssh
 
-entity AWSConfig extends vm::IaaSConfig:
+entity Provider:
     """
         The configuration to access Amazon Web Services
     """
+    string name
     string region
     string availability_zone
     string access_key
     string secret_key
-    string machine_prefix = ""
 end
 
-implementation awsConfig for AWSConfig:
-    iaas.iaas_config_string = std::template("aws/ec2_config.tmpl")
+implement Provider using std::none
+
+entity AWSResource extends std::PurgeableResource, std::ManagedResource:
 end
 
-implement AWSConfig using awsConfig
-
-entity LoadBalancer extends web::LoadBalancer:
-    """
-        A AWS loadbalancer
-    """
-    number dest_port=80
-end
-
-ELB elb [1] -- [1] LoadBalancer lb
-
-implement LoadBalancer using awsLB
-
-implementation awsLB for LoadBalancer:
-    for lb_app in applications:
-        elb_name = aws::elbid(lb_app.name.hostname)
-        elb = ELB(name=elb_name, iaas=iaas, dest_port=dest_port)
-        self.elb = elb
-        for app in lb_app.app_instances:
-            elb.instances = app.container.host
-        end
-    end
-end
-
-entity ELB:
+entity ELB extends AWSResource:
     """
         An ELB load balancer
 
@@ -69,14 +46,36 @@ entity ELB:
     number listen_port=80
     number dest_port=80
     string protocol="http"
-    bool   purged = false
-    bool   purge_on_delete = true
 end
 
 implement ELB using std::none
 
-vm::IaaS iaas [1] -- [0:] LoadBalancer loadbalancers
+ELB.provider [1] -- Provider.elb [0:]
 
-vm::IaaS iaas [1] -- [0:] ELB aws_elb
-vm::Host instances [0:] -- [0:] ELB aws_elb
+entity VirtualMachine extends AWSResource:
+    """
+        This entity represents a virtual machine that is hosted on an IaaS
+
+        :param flavor An id representing the type of virtual machine
+        :param image An id that represents the image that needs to be used to
+                        boot the virtual machine.
+        :param user_data A script that is booted on first boot
+        :param public_key_name The name of the public key that needs to be deployed
+    """
+    string name
+    string flavor
+    string image
+    string user_data
+    string subnet_id
+    bool source_dest_check=true
+end
+
+index VirtualMachine(provider, name)
+
+implement VirtualMachine using std::none
+
+VirtualMachine.provider [1] -- Provider.virtual_machines [0:]
+VirtualMachine.public_key [1] -- ssh::Key
+
+ELB.instances [0:] -- VirtualMachine
 
