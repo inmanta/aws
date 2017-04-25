@@ -185,7 +185,7 @@ class ELBHandler(AWSHandler):
         for inst in resource.instances:
             if inst not in vms:
                 ctx.warning("Instance %(instance)s not added to aws::ELB %(elb)s, because it does not exist.",
-                            instances=inst.id, elb=resource.name)
+                            instances=inst, elb=resource.name)
             else:
                 instance_list.append({"InstanceId": vms[inst].id})
 
