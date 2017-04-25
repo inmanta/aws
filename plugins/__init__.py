@@ -134,7 +134,7 @@ class ELBHandler(AWSHandler):
         return None
 
     def read_resource(self, ctx, resource: ELB):
-        vms = {self._get_name(x): x for x in self._ec2.instances.all()}
+        vms = {self._get_name(x): x for x in self._ec2.instances.all() if x.state["Name"] != "terminated"}
         vm_ids = {x.id: x for x in vms.values()}
         security_groups = {sg.id: sg for sg in self._ec2.security_groups.all()}
 
@@ -311,7 +311,8 @@ class VirtualMachineHandler(AWSHandler):
     def facts(self, ctx, resource):
         facts = {}
 
-        instance = list(self._ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}]))
+        instance = [x for x in self._ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}])
+                    if x.state["Name"] != "terminated"]
         if len(instance) == 0:
             return {}
 
