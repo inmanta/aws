@@ -17,6 +17,7 @@
 """
 import web
 import ssh
+import ip
 
 entity Provider:
     """
@@ -27,9 +28,15 @@ entity Provider:
     string availability_zone
     string access_key
     string secret_key
+    bool auto_agent=true
 end
 
 implement Provider using std::none
+implement Provider using agentConfig when auto_agent
+
+implementation agentConfig for Provider:
+    std::AgentConfig(autostart=true, agentname=name, uri="local:", provides=self)
+end
 
 entity AWSResource extends std::PurgeableResource, std::ManagedResource:
 end
@@ -52,7 +59,15 @@ implement ELB using std::none
 
 ELB.provider [1] -- Provider.elb [0:]
 
-entity VirtualMachine extends AWSResource:
+entity VMAttributes:
+    string flavor
+    string image
+    string user_data
+    string subnet_id
+    bool source_dest_check=true
+end
+
+entity VirtualMachine extends VMAttributes, AWSResource:
     """
         This entity represents a virtual machine that is hosted on an IaaS
 
@@ -63,19 +78,42 @@ entity VirtualMachine extends AWSResource:
         :param public_key_name The name of the public key that needs to be deployed
     """
     string name
-    string flavor
-    string image
-    string user_data
-    string subnet_id
-    bool source_dest_check=true
 end
 
 index VirtualMachine(provider, name)
 
-implement VirtualMachine using std::none
+implement VirtualMachine using req
+
+implementation req for VirtualMachine:
+    self.requires = self.provider.requires
+end
 
 VirtualMachine.provider [1] -- Provider.virtual_machines [0:]
 VirtualMachine.public_key [1] -- ssh::Key
 
 ELB.instances [0:] -- VirtualMachine
 
+entity Host extends VMAttributes, ip::Host:
+    """
+        A subclass of ip::Host that creates a virtual machine on AWS.
+    """
+end
+
+Host.vm [1] -- VirtualMachine
+Host.provider [1] -- Provider
+Host.public_key [1] -- ssh::Key
+
+Host.public_ip [0:1] -- ip::IP
+Host.private_ip [1] -- ip::IP
+
+implementation awsHost for Host:
+    self.vm = VirtualMachine(name=name, public_key=public_key, provider=provider, user_data=user_data, image=image,
+                             flavor=flavor, subnet_id=subnet_id, source_dest_check=source_dest_check)
+    self.requires = self.vm
+
+    self.private_ip = ip::IP(v4=std::getfact(vm, "ip_address"))
+    self.public_ip = ip::IP(v4=std::getfact(vm, "public_ip"))
+    self.ip = self.public_ip.v4
+end
+
+implement Host using std::hostDefaults, awsHost
