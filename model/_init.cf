@@ -78,6 +78,7 @@ entity VirtualMachine extends VMAttributes, AWSResource:
         :param public_key_name The name of the public key that needs to be deployed
     """
     string name
+    dict tags = {}
 end
 
 index VirtualMachine(provider, name)

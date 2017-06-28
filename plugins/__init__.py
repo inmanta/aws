@@ -78,7 +78,7 @@ class ELB(AWSResource):
 
 @resource("aws::VirtualMachine", agent="provider.name", id_attribute="name")
 class VirtualMachine(AWSResource):
-    fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check")
+    fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check", "tags")
 
     @staticmethod
     def get_key_name(_, resource):
@@ -268,6 +268,10 @@ class VirtualMachineHandler(AWSHandler):
         resource.flavor = instance.instance_type
         resource.image = instance.image_id
         resource.key_name = instance.key_name
+        
+        tags = self.tags_amazon_to_internal(instance.tags)
+        del tags["Name"]
+        resource.tags = tags
 
         if instance.state["Name"] == "terminated":
             resource.purged = True
@@ -276,8 +280,14 @@ class VirtualMachineHandler(AWSHandler):
         # these do not work on terminated instances
         result = instance.describe_attribute(Attribute="sourceDestCheck")
         resource.source_dest_check = result["SourceDestCheck"]["Value"]
+       
 
-
+    def tags_amazon_to_internal(self, tags):
+        return {i["Key"]:i["Value"] for i in tags}
+        
+    def tags_internal_to_amazon(self,tags):
+        return [{"Key":k,"Value":v} for k,v in tags.items()]
+    
     def _ensure_key(self, ctx: HandlerContext, key_name, key_value):
         self._ec2.import_key_pair(KeyName=key_name, PublicKeyMaterial=key_value.encode())
 
@@ -285,18 +295,22 @@ class VirtualMachineHandler(AWSHandler):
         if not ctx.get("key"):
             self._ensure_key(ctx, resource.key_name, resource.key_value)
 
+        itags = resource.tags
+        itags["Name"] = resource.name
+        tags = self.tags_internal_to_amazon(itags)
+
         instances = self._ec2.create_instances(ImageId=resource.image, KeyName=resource.key_name, UserData=resource.user_data,
                                               InstanceType=resource.flavor, SubnetId=resource.subnet_id,
                                               Placement={'AvailabilityZone': resource.provider["region"] +
                                                          resource.provider["availability_zone"]},
-                                              MinCount=1, MaxCount=1)
+                                              MinCount=1, MaxCount=1,
+                                              TagSpecifications=[{"ResourceType":"instance","Tags":tags}])
         if len(instances) != 1:
             ctx.set_status(const.ResourceState.failed)
             ctx.error("Requested one instance but do not receive it.", instances=instances)
             return
 
         instance = instances[0]
-        instance.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
 
         if not resource.source_dest_check:
             instance.modify_attribute(Attribute="sourceDestCheck", Value="False")
