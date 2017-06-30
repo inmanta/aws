@@ -19,6 +19,8 @@ import web
 import ssh
 import ip
 
+amazonlinux = std::OS(name = "amazon", family = std::linux)
+
 entity Provider:
     """
         The configuration to access Amazon Web Services
