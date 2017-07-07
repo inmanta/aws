@@ -101,3 +101,15 @@ aws::ELB(provider=provider, name="%(name)s")
 
     project.deploy_resource("aws::ELB")
     assert False
+
+
+def test_Volume(project): 
+    project.compile("""
+import unittest
+import aws
+
+provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
+                         secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
+volume = aws::Volume(name="test", provider=provider, availability_zone="a")
+""")
+    project.deploy_resource("aws::Volume")

@@ -78,7 +78,8 @@ class ELB(AWSResource):
 
 @resource("aws::VirtualMachine", agent="provider.name", id_attribute="name")
 class VirtualMachine(AWSResource):
-    fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check", "tags")
+    fields = ("name", "user_data", "flavor", "image", "key_name", "key_value",
+              "subnet_id", "source_dest_check", "tags", "volumes", "volume_attachment")
 
     @staticmethod
     def get_key_name(_, resource):
@@ -88,8 +89,22 @@ class VirtualMachine(AWSResource):
     def get_key_value(_, resource):
         return resource.public_key.public_key
 
+    @staticmethod
+    def get_volumes(_, resource):
+        return [x.name for x in resource.volumes]
+
+    @staticmethod
+    def get_volume_attachment(_, resource):
+        return {x.name: x.attachmentpoint for x in resource.volumes}
+
+
+@resource("aws::Volume", agent="provider.name", id_attribute="name")
+class Volume(AWSResource):
+    fields = ("name", "availability_zone", "encrypted", "size", "volume_type", "tags")
+
 
 class AWSHandler(CRUDHandler):
+
     def __init__(self, agent, io=None) -> None:
         CRUDHandler.__init__(self, agent, io=io)
 
@@ -112,12 +127,27 @@ class AWSHandler(CRUDHandler):
         self._ec2 = None
         self._elb = None
 
+    def tags_amazon_to_internal(self, tags):
+        return {i["Key"]: i["Value"] for i in tags}
+
+    def tags_internal_to_amazon(self, tags):
+        return [{"Key": k, "Value": v} for k, v in tags.items()]
+
+    def get_name_from_tag(self, tags):
+        if tags is None:
+            return None
+        alltags = self.tags_amazon_to_internal(tags)
+        if "Name" in alltags:
+            return alltags["Name"]
+        return None
+
 
 @provider("aws::ELB", name="ec2")
 class ELBHandler(AWSHandler):
     """
         This class manages ELB instances on amazon ec2
     """
+
     def _get_name(self, vm):
         tags = vm.tags if vm.tags is not None else []
         for tag in tags:
@@ -213,7 +243,7 @@ class ELBHandler(AWSHandler):
 
             if len(remove) > 0:
                 self._elb.deregister_instances_from_load_balancer(LoadBalancerName=resource.name,
-                                                                Instances=[{"InstanceId": x} for x in remove])
+                                                                  Instances=[{"InstanceId": x} for x in remove])
 
         if "security_group" in changes:
             # set the security group
@@ -243,6 +273,7 @@ class ELBHandler(AWSHandler):
 
 @provider("aws::VirtualMachine", name="ec2")
 class VirtualMachineHandler(AWSHandler):
+
     def read_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         key_pairs = list(self._ec2.key_pairs.filter(Filters=[{"Name": "key-name", "Values": [resource.key_name]}]))
         if len(key_pairs) == 0:
@@ -268,7 +299,9 @@ class VirtualMachineHandler(AWSHandler):
         resource.flavor = instance.instance_type
         resource.image = instance.image_id
         resource.key_name = instance.key_name
-        
+        resource.volumes = [x for x in [self.get_name_from_tag(volume.tags)
+                                        for volume in instance.volumes.all()] if x is not None]
+
         tags = self.tags_amazon_to_internal(instance.tags)
         del tags["Name"]
         resource.tags = tags
@@ -280,14 +313,7 @@ class VirtualMachineHandler(AWSHandler):
         # these do not work on terminated instances
         result = instance.describe_attribute(Attribute="sourceDestCheck")
         resource.source_dest_check = result["SourceDestCheck"]["Value"]
-       
 
-    def tags_amazon_to_internal(self, tags):
-        return {i["Key"]:i["Value"] for i in tags}
-        
-    def tags_internal_to_amazon(self,tags):
-        return [{"Key":k,"Value":v} for k,v in tags.items()]
-    
     def _ensure_key(self, ctx: HandlerContext, key_name, key_value):
         self._ec2.import_key_pair(KeyName=key_name, PublicKeyMaterial=key_value.encode())
 
@@ -300,11 +326,11 @@ class VirtualMachineHandler(AWSHandler):
         tags = self.tags_internal_to_amazon(itags)
 
         instances = self._ec2.create_instances(ImageId=resource.image, KeyName=resource.key_name, UserData=resource.user_data,
-                                              InstanceType=resource.flavor, SubnetId=resource.subnet_id,
-                                              Placement={'AvailabilityZone': resource.provider["region"] +
-                                                         resource.provider["availability_zone"]},
-                                              MinCount=1, MaxCount=1,
-                                              TagSpecifications=[{"ResourceType":"instance","Tags":tags}])
+                                               InstanceType=resource.flavor, SubnetId=resource.subnet_id,
+                                               Placement={'AvailabilityZone': resource.provider["region"] +
+                                                          resource.provider["availability_zone"]},
+                                               MinCount=1, MaxCount=1,
+                                               TagSpecifications=[{"ResourceType": "instance", "Tags": tags}])
         if len(instances) != 1:
             ctx.set_status(const.ResourceState.failed)
             ctx.error("Requested one instance but do not receive it.", instances=instances)
@@ -312,11 +338,40 @@ class VirtualMachineHandler(AWSHandler):
 
         instance = instances[0]
 
+        for volumename in resource.volumes:
+            self.attachForName(ctx, instance, volumename, resource.volume_attachment[volumename])
+
         if not resource.source_dest_check:
             instance.modify_attribute(Attribute="sourceDestCheck", Value="False")
 
     def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
-        raise SkipResource("Modifying a running instance is not supported.")
+        todo = len(changes)
+
+        instance = ctx.get("instance")
+
+        if "volumes" in changes:
+            current = changes["volumes"]["current"]
+            desired = changes["volumes"]["desired"]
+            toadd = set(desired) - set(current)
+            toremove = set(current) - set(desired)
+            if(len(toremove) > 0):
+                ctx.warning("Handler will not detach storage!")
+            for volumename in toadd:
+                self.attachForName(ctx, instance, volumename, resource.volume_attachment[volumename])
+
+            todo -= 1
+        if todo > 0:
+            raise SkipResource("Modifying a running instance is not supported.")
+
+    def attachForName(self, ctx: HandlerContext, instance, volumename, device):
+        volume = [x for x in self._ec2.volumes.filter(Filters=[{"Name": "tag:Name", "Values": [volumename]}])]
+
+        if len(volume) != 1:
+            ctx.error("Found more than one volume with tag Name %(name)s", name=resource.name, instances=instance)
+            raise SkipResource()
+        volume = volume[0]
+
+        instance.attach_volume(VolumeId=volume.id, Device=device)
 
     def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         instance = ctx.get("instance")
@@ -350,3 +405,86 @@ class VirtualMachineHandler(AWSHandler):
         facts["public_ip"] = instance.public_ip_address
 
         return facts
+
+
+@provider("aws::Volume", name="volume")
+class VolumeHandler(AWSHandler):
+
+    def read_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        instance = [x for x in self._ec2.volumes.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}])]
+
+        if len(instance) == 0:
+            raise ResourcePurged()
+
+        elif len(instance) > 1:
+            ctx.info("Found more than one instance with tag Name %(name)s", name=resource.name, instances=instance)
+            raise SkipResource()
+
+        instance = instance[0]
+        ctx.set("instance", instance)
+        resource.purged = False
+        resource.volume_type = instance.volume_type
+        resource.size = instance.size
+        resource.encrypted = instance.encrypted
+
+        tags = self.tags_amazon_to_internal(instance.tags)
+        del tags["Name"]
+        resource.tags = tags
+
+        if instance.state == "terminated":
+            resource.purged = True
+            return
+
+    def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        itags = resource.tags
+        itags["Name"] = resource.name
+        tags = self.tags_internal_to_amazon(itags)
+
+        instances = self._ec2.create_volume(AvailabilityZone=resource.provider["region"] + resource.availability_zone,
+                                            Encrypted=resource.encrypted,
+                                            Size=resource.size,
+                                            VolumeType=resource.volume_type,
+                                            DryRun=False,
+                                            TagSpecifications=[{"ResourceType": "volume", "Tags": tags}])
+        if instances is None:
+            ctx.set_status(const.ResourceState.failed)
+            ctx.error("Requested one Volume but do not receive it.", instances=instances)
+            return
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
+        raise SkipResource("Modifying a volume is not supported yet.")
+
+    def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        pass
+#         instance = ctx.get("instance")
+#         instance.terminate()
+
+    def facts(self, ctx, resource):
+        #         facts = {}
+        #
+        #         instance = [x for x in self._ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}])
+        #                     if x.state["Name"] != "terminated"]
+        #         if len(instance) == 0:
+        #             return {}
+        #
+        #         elif len(instance) > 1:
+        #             ctx.info("Found more than one instance with tag Name %(name)s", name=resource.name, instances=instance)
+        #             raise SkipResource()
+        #
+        #         instance = instance[0]
+        #
+        #         # find eth0
+        #         iface = None
+        #         for i in instance.network_interfaces_attribute:
+        #             if i["Attachment"]["DeviceIndex"] == 0:
+        #                 iface = i
+        #
+        #         if iface is None:
+        #             return facts
+        #
+        #         facts["mac_address"] = iface["MacAddress"]
+        #         facts["ip_address"] = iface["PrivateIpAddress"]
+        #         facts["public_ip"] = instance.public_ip_address
+        #
+        #         return facts
+        pass
