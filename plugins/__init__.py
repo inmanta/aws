@@ -16,17 +16,24 @@
     Contact: code@inmanta.com
 """
 
-from inmanta.resources import resource, PurgeableResource, ManagedResource, Resource
-from inmanta.agent.handler import provider, ResourceHandler, CRUDHandler, HandlerContext, ResourcePurged, SkipResource
-from inmanta.plugins import plugin
-from inmanta import const
-
-import boto3
-
+import json
 import logging
 import re
-import json
+import time
+
+import boto3
 import botocore
+import base64
+import binascii
+from Crypto.PublicKey import RSA
+
+from inmanta import const
+from inmanta.agent.handler import provider, ResourceHandler, CRUDHandler, HandlerContext, ResourcePurged, SkipResource
+from inmanta.ast import OptionalValueException
+from inmanta.plugins import plugin
+from inmanta.resources import resource, PurgeableResource, ManagedResource, Resource
+from inmanta.execute.util import Unknown
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +49,94 @@ def elbid(name: "string") -> "string":
     return re.sub("[\.]", "-", name)
 
 
+def pkcs1_unpad(text):
+    # From http://kfalck.net/2011/03/07/decoding-pkcs1-padding-in-python
+    if len(text) > 0 and text[0] == 2:
+        # Find end of padding marked by nul
+        pos = text.find(b'\x00')
+        if pos > 0:
+            return text[pos + 1:].decode()
+    return None
+
+
+def long_to_bytes (val, endianness='big'):
+    # From http://stackoverflow.com/questions/8730927/convert-python-long-int-to-fixed-size-byte-array
+
+    # one (1) hex digit per four (4) bits
+    width = val.bit_length()
+
+    # unhexlify wants an even multiple of eight (8) bits, but we don't
+    # want more digits than we need (hence the ternary-ish 'or')
+    width += 8 - ((width % 8) or 8)
+
+    # format width specifier: four (4) bits per hex digit
+    fmt = '%%0%dx' % (width // 4)
+
+    # prepend zero (0) to the width, to zero-pad the output
+    s = binascii.unhexlify(fmt % val)
+
+    if endianness == 'little':
+        # see http://stackoverflow.com/a/931095/309233
+        s = s[::-1]
+
+    return s
+
+
+def decrypt_password(rsa_key, password):
+    # Undo the whatever-they-do to the ciphertext to get the integer
+    encryptedData = base64.b64decode(password)
+    ciphertext = int(binascii.hexlify(encryptedData), 16)
+
+    # Decrypt it
+    plaintext = rsa_key.decrypt(ciphertext)
+
+    # This is the annoying part.  long -> byte array
+    decryptedData = long_to_bytes(plaintext)
+
+    # Now Unpad it
+    unpaddedData = pkcs1_unpad(decryptedData)
+
+    # Done
+    return unpaddedData
+
+
+@plugin
+def decrypt(key_data: "string", cipher_text: "string") -> "string":
+    # Possibly there is no password available (yet)
+    cipher_text = cipher_text.strip()
+    if cipher_text == "":
+        return ""
+
+    # Import the key
+    try:
+        key = RSA.importKey(key_data)
+    except ValueError as ex:
+        raise Exception("Could not import SSH Key (Is it an RSA key? Is it password protected?): %s" % ex)
+
+    pw = decrypt_password(key, cipher_text)
+
+    if pw is None:
+        raise Exception("Failed to decrypt password")
+
+    return pw
+
+
+@plugin
+def get_api_id(provider: "aws::Provider", api_name: "string") -> "string":
+    session = boto3.Session(region_name=provider.region, aws_access_key_id=provider.access_key,
+                            aws_secret_access_key=provider.secret_key)
+    client = session.client("apigateway")
+
+    apis = client.get_rest_apis()
+
+    for api in apis["items"]:
+        if api["name"] == api_name:
+            return api["id"]
+
+    return Unknown(source=provider)
+
+
+# # Handlers
 def get_config(exporter, vm):
     """
         Create the auth url that openstack can use
@@ -78,7 +173,8 @@ class ELB(AWSResource):
 
 @resource("aws::VirtualMachine", agent="provider.name", id_attribute="name")
 class VirtualMachine(AWSResource):
-    fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check", "tags")
+    fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check", "tags",
+              "subnet", "security_groups")
 
     @staticmethod
     def get_key_name(_, resource):
@@ -87,6 +183,105 @@ class VirtualMachine(AWSResource):
     @staticmethod
     def get_key_value(_, resource):
         return resource.public_key.public_key
+
+    @staticmethod
+    def get_subnet_id(_, resource):
+        """
+            Validation of subnet and subnet_id combination is done in get_subnet
+        """
+        try:
+            subnet_id = resource.subnet_id
+        except OptionalValueException:
+            subnet_id = None
+        return subnet_id
+
+    @staticmethod
+    def get_subnet(_, resource):
+        try:
+            subnet_name = resource.subnet.name
+        except OptionalValueException:
+            subnet_name = None
+
+        subnet_id = VirtualMachine.get_subnet_id(None, resource)
+
+        if (subnet_id is None and subnet_name is None) or (subnet_id is not None and subnet_name is not None):
+            raise ValueError("A virtual machine requires either a subnet instance or a subnet_id")
+
+        return subnet_name
+
+    @staticmethod
+    def get_security_groups(_, resource):
+        return [x.name for x in resource.security_groups]
+
+
+@resource("aws::VPC", agent="provider.name", id_attribute="name")
+class VPC(AWSResource):
+    fields = ("name", "cidr_block", "instance_tenancy")
+
+
+@resource("aws::Subnet", agent="provider.name", id_attribute="name")
+class Subnet(AWSResource):
+    fields = ("name", "cidr_block", "availability_zone", "vpc", "map_public_ip_on_launch")
+
+    @staticmethod
+    def get_vpc(_, resource):
+        return resource.vpc.name
+
+
+@resource("aws::InternetGateway", agent="provider.name", id_attribute="name")
+class InternetGateway(AWSResource):
+    fields = ("name", "vpc")
+
+    @staticmethod
+    def get_vpc(_, resource):
+        return resource.vpc.name
+
+
+@resource("aws::SecurityGroup", agent="provider.name", id_attribute="name")
+class SecurityGroup(AWSResource):
+    """
+        A security group in an OpenStack tenant
+    """
+    fields = ("name", "description", "manage_all", "rules", "retries", "wait", "vpc")
+
+    @staticmethod
+    def get_rules(exporter, group):
+        rules = []
+        for rule in group.rules:
+            json_rule = {"protocol": rule.ip_protocol,
+                         "direction": rule.direction}
+
+            if rule.port > 0:
+                json_rule["port_range_min"] = rule.port
+                json_rule["port_range_max"] = rule.port
+
+            else:
+                json_rule["port_range_min"] = rule.port_min
+                json_rule["port_range_max"] = rule.port_max
+
+            if json_rule["port_range_min"] == 0:
+                json_rule["port_range_min"] = -1
+
+            if json_rule["port_range_max"] == 0:
+                json_rule["port_range_max"] = -1
+
+            try:
+                json_rule["remote_ip_prefix"] = rule.remote_prefix
+            except Exception:
+                pass
+
+            try:
+                json_rule["remote_group"] = rule.remote_group.name
+            except Exception:
+                pass
+
+            rules.append(json_rule)
+
+        return rules
+
+    @staticmethod
+    def get_vpc(_, resource):
+        return resource.vpc.name
 
 
 class AWSHandler(CRUDHandler):
@@ -111,6 +306,12 @@ class AWSHandler(CRUDHandler):
 
         self._ec2 = None
         self._elb = None
+
+    def tags_amazon_to_internal(self, tags):
+        return {i["Key"]:i["Value"] for i in tags}
+
+    def tags_internal_to_amazon(self, tags):
+        return [{"Key":k, "Value":v} for k, v in tags.items()]
 
 
 @provider("aws::ELB", name="ec2")
@@ -243,6 +444,25 @@ class ELBHandler(AWSHandler):
 
 @provider("aws::VirtualMachine", name="ec2")
 class VirtualMachineHandler(AWSHandler):
+    def _get_subnet(self, subnet_id):
+        subnets = list(self._ec2.subnets.filter(SubnetIds=[subnet_id]))
+        if len(subnets) == 0:
+            return None
+        return subnets[0]
+
+    def _get_subnet_by_name(self, ctx, name):
+        subnets = list(self._ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
+        if len(subnets) == 0:
+            ctx.info("No subnet found with tag Name %(name)s", name=name)
+            raise SkipResource()
+
+        elif len(subnets) > 1:
+            ctx.info("Found more than one subnet with tag Name %(name)s", name=name, subnets=subnets)
+            raise SkipResource()
+
+        subnet = subnets[0]
+        return subnet
+
     def read_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         key_pairs = list(self._ec2.key_pairs.filter(Filters=[{"Name": "key-name", "Values": [resource.key_name]}]))
         if len(key_pairs) == 0:
@@ -268,7 +488,19 @@ class VirtualMachineHandler(AWSHandler):
         resource.flavor = instance.instance_type
         resource.image = instance.image_id
         resource.key_name = instance.key_name
-        
+        resource.subnet_id = instance.subnet_id
+
+        if instance.subnet_id is not None:
+            subnet = self._get_subnet(instance.subnet_id)
+            if subnet is not None and subnet.tags is not None:
+                name_tag = [x for x in subnet.tags if x["Key"] == "Name"]
+                if len(name_tag) > 0:
+                    resource.subnet = name_tag[0]["Value"]
+                else:
+                    resource.subnet = None
+            else:
+                resource.subnet = None
+
         tags = self.tags_amazon_to_internal(instance.tags)
         del tags["Name"]
         resource.tags = tags
@@ -280,14 +512,7 @@ class VirtualMachineHandler(AWSHandler):
         # these do not work on terminated instances
         result = instance.describe_attribute(Attribute="sourceDestCheck")
         resource.source_dest_check = result["SourceDestCheck"]["Value"]
-       
 
-    def tags_amazon_to_internal(self, tags):
-        return {i["Key"]:i["Value"] for i in tags}
-        
-    def tags_internal_to_amazon(self,tags):
-        return [{"Key":k,"Value":v} for k,v in tags.items()]
-    
     def _ensure_key(self, ctx: HandlerContext, key_name, key_value):
         self._ec2.import_key_pair(KeyName=key_name, PublicKeyMaterial=key_value.encode())
 
@@ -299,12 +524,32 @@ class VirtualMachineHandler(AWSHandler):
         itags["Name"] = resource.name
         tags = self.tags_internal_to_amazon(itags)
 
+        if resource.subnet is not None:
+            subnet = self._get_subnet_by_name(ctx, resource.subnet)
+            subnet_id = subnet.id
+            vpc_id = subnet.vpc.id
+        else:
+            subnet_id = resource.subnet_id
+            subnets = self._ec2.subnets.filter(SubnetIds=[subnet_id])
+            if len(subnets) == 0:
+                raise SkipResource("Subnet %s does not exist" % subnet_id)
+            vpc_id = subnets[0].vpc.id
+
+        callargs = {}
+        if len(resource.security_groups) > 0:
+            sgs = list(self._ec2.security_groups.filter(Filters=[{"Name": "group-name", "Values": resource.security_groups},
+                                                        {"Name": "vpc-id", "Values": [vpc_id]}]))
+            if len(sgs) != len(resource.security_groups):
+                ctx.warning("Unable to find the correct number of security groups. Found: %(groups)s",
+                            groups=[x.group_name for x in sgs])
+            callargs["SecurityGroupIds"] = [x.id for x in sgs]
+
+        ctx.info("args %(args)s", args=callargs)
+
         instances = self._ec2.create_instances(ImageId=resource.image, KeyName=resource.key_name, UserData=resource.user_data,
-                                              InstanceType=resource.flavor, SubnetId=resource.subnet_id,
-                                              Placement={'AvailabilityZone': resource.provider["region"] +
-                                                         resource.provider["availability_zone"]},
+                                              InstanceType=resource.flavor, SubnetId=subnet_id,
                                               MinCount=1, MaxCount=1,
-                                              TagSpecifications=[{"ResourceType":"instance","Tags":tags}])
+                                              TagSpecifications=[{"ResourceType": "instance", "Tags": tags}], **callargs)
         if len(instances) != 1:
             ctx.set_status(const.ResourceState.failed)
             ctx.error("Requested one instance but do not receive it.", instances=instances)
@@ -321,6 +566,12 @@ class VirtualMachineHandler(AWSHandler):
     def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         instance = ctx.get("instance")
         instance.terminate()
+
+        count = 0
+        while instance.state["Name"] != "terminated" and count < 30:
+            count += 1
+            time.sleep(5)
+            instance.reload()
 
     def facts(self, ctx, resource):
         facts = {}
@@ -349,4 +600,358 @@ class VirtualMachineHandler(AWSHandler):
         facts["ip_address"] = iface["PrivateIpAddress"]
         facts["public_ip"] = instance.public_ip_address
 
+        data = instance.password_data()
+        if "PasswordData" in data:
+            facts["password_data"] = data["PasswordData"].strip()
+
         return facts
+
+
+@provider("aws::VPC", name="ec2")
+class VPCHandler(AWSHandler):
+    def _get_vpc(self, name):
+        return list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
+
+    def read_resource(self, ctx: HandlerContext, resource: VPC) -> None:
+        vpcs = self._get_vpc(resource.name)
+        if len(vpcs) == 0:
+            raise ResourcePurged()
+
+        elif len(vpcs) > 1:
+            ctx.info("Found more than one vpcs with tag Name %(name)s", name=resource.name, instances=vpcs)
+            raise SkipResource()
+
+        vpc = vpcs[0]
+        ctx.set("vpc", vpc)
+
+        resource.cidr_block = vpc.cidr_block
+        resource.instance_tenancy = vpc.instance_tenancy
+        resource.purged = False
+
+    def create_resource(self, ctx: HandlerContext, resource: VPC) -> None:
+        vpc = self._ec2.create_vpc(CidrBlock=resource.cidr_block, InstanceTenancy=resource.instance_tenancy)
+        vpc.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+        ctx.info("Create new vpc with id %(id)s", id=vpc.id)
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: VPC) -> None:
+        raise SkipResource("A VPC cannot be modified after creation.")
+
+    def delete_resource(self, ctx: HandlerContext, resource: VPC) -> None:
+        vpc = ctx.get("vpc")
+        ctx.info("Purging vpc %(id)s", id=vpc.id)
+        vpc.delete()
+        ctx.set_purged()
+
+
+@provider("aws::Subnet", name="ec2")
+class SubnetHandler(AWSHandler):
+    def read_resource(self, ctx: HandlerContext, resource: Subnet) -> None:
+        subnets = list(self._ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}]))
+        if len(subnets) == 0:
+            raise ResourcePurged()
+
+        elif len(subnets) > 1:
+            ctx.info("Found more than one subnet with tag Name %(name)s", name=resource.name, instances=subnets)
+            raise SkipResource()
+
+        subnet = subnets[0]
+        ctx.set("subnet", subnet)
+        resource.purged = False
+        resource.cidr_block = subnet.cidr_block
+        resource.availability_zone = subnet.availability_zone
+        resource.map_public_ip_on_launch = subnet.map_public_ip_on_launch
+
+        vpc_tag = [x for x in subnet.vpc.tags if x["Key"] == "Name"]
+        resource.vpc = vpc_tag[0]["Value"]
+
+    def create_resource(self, ctx: HandlerContext, resource: Subnet) -> None:
+        vpcs = list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [resource.vpc]}]))
+
+        if len(vpcs) == 0:
+            raise SkipResource("The vpc for this subnet is not available.")
+
+        elif len(vpcs) > 1:
+            raise SkipResource("Multiple VPCs with the same name tag found.")
+
+        vpc = vpcs[0]
+        args = {"VpcId": vpc.id, "CidrBlock": resource.cidr_block}
+        if resource.availability_zone is not None:
+            args["AvailabilityZone"] = resource.availability_zone
+
+        subnet = self._ec2.create_subnet(**args)
+        subnet.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+
+        if subnet.map_public_ip_on_launch != resource.map_public_ip_on_launch:
+            subnet.meta.client.modify_subnet_attribute(SubnetId=subnet.id,
+                                                       MapPublicIpOnLaunch={"Value": resource.map_public_ip_on_launch})
+
+        ctx.info("Created new subnet with id %(id)s", id=subnet.id)
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: Subnet) -> None:
+        subnet = ctx.get("subnet")
+        if "map_public_ip_on_launch" in changes:
+            subnet.meta.client.modify_subnet_attribute(SubnetId=subnet.id,
+                                              MapPublicIpOnLaunch={"Value": resource.map_public_ip_on_launch})
+            ctx.set_updated()
+
+    def delete_resource(self, ctx: HandlerContext, resource: Subnet) -> None:
+        subnet = ctx.get("subnet")
+        ctx.info("Purging subnet %(id)s", id=subnet.id)
+        subnet.delete()
+        ctx.set_purged()
+
+
+@provider("aws::InternetGateway", name="ec2")
+class InternetGatewayHandler(AWSHandler):
+    def read_resource(self, ctx: HandlerContext, resource: InternetGateway) -> None:
+        igws = list(self._ec2.internet_gateways.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}]))
+        if len(igws) == 0:
+            raise ResourcePurged()
+
+        elif len(igws) > 1:
+            ctx.info("Found more than one internet gateway with tag Name %(name)s", name=resource.name, instances=igws)
+            raise SkipResource()
+
+        igw = igws[0]
+        ctx.set("igw", igw)
+        resource.purged = False
+
+        vpc = None
+        if len(igw.attachments) > 0 and "VpcId" in igw.attachments[0]:
+            data = igw.attachments[0]
+            try:
+                vpc = list(self._ec2.vpcs.filter(VpcIds=[data["VpcId"]]))[0]
+                tags = [x for x in vpc.tags if x["Key"] == "Name"]
+                if len(tags) > 0:
+                    resource.vpc = tags[0]["Value"]
+                else:
+                    resource.vpc = None
+            except botocore.exceptions.ClientError:
+                resource.vpc = None
+        else:
+            resource.vpc = None
+        ctx.set("vpc", vpc)
+
+    def get_vpc(self, name):
+        vpcs = list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
+
+        if len(vpcs) == 0:
+            raise SkipResource("The vpc for this internet gateway is not available.")
+
+        elif len(vpcs) > 1:
+            raise SkipResource("Multiple VPCs with the same name tag found.")
+
+        return vpcs[0]
+
+    def create_resource(self, ctx: HandlerContext, resource: InternetGateway) -> None:
+        vpc = self.get_vpc(resource.name)
+        igw = self._ec2.create_internet_gateway()
+        igw.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+        igw.attach_to_vpc(VpcId=vpc.id)
+        ctx.info("Created new internet gateway with id %(id)s", id=igw.id)
+
+        # Check that all VPC route tables have a default route to us
+        for tbl in vpc.route_tables.all():
+            has_default = False
+            for rt in tbl.routes:
+                if rt.destination_cidr_block == "0.0.0.0/0":
+                    has_default = True
+
+            if not has_default:
+                tbl.create_route(DestinationCidrBlock="0.0.0.0/0", GatewayId=igw.id)
+
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: InternetGateway) -> None:
+        igw = ctx.get("igw")
+        vpc = self.get_vpc(resource.name)
+        igw.attach_to_vpc(VpcId=vpc.id)
+        ctx.set_updated()
+
+    def delete_resource(self, ctx: HandlerContext, resource: InternetGateway) -> None:
+        igw = ctx.get("igw")
+        if len(igw.attachments) > 0:
+            igw.detach_from_vpc(VpcId=igw.attachments[0]["VpcId"])
+        igw.delete()
+        ctx.set_purged()
+
+
+@provider("aws::SecurityGroup", name="ec2")
+class SecurityGroupHandler(AWSHandler):
+    def _compare_rule(self, old, new):
+        old_keys = old.keys()
+        new_keys = new.keys()
+
+        if old_keys != new_keys:
+            return False
+
+        for key in old_keys:
+            if old[key] != new[key]:
+                return False
+
+        return True
+
+    def _diff(self, current, desired):
+        changes = AWSHandler._diff(self, current, desired)
+
+        if "rules" in changes:
+            old_rules = list(changes["rules"]["current"])
+            new_rules = list(changes["rules"]["desired"])
+
+            for new_rule in changes["rules"]["desired"]:
+                for old_rule in changes["rules"]["current"]:
+                    if self._compare_rule(old_rule, new_rule):
+                        old_rules.remove(old_rule)
+                        new_rules.remove(new_rule)
+                        break
+
+            if len(old_rules) == 0 and len(new_rules) == 0:
+                del changes["rules"]
+
+        return changes
+
+    def _build_rule(self, ctx, rule, direction):
+        current_rule = {}
+        if rule["IpProtocol"] == '-1':
+            current_rule["protocol"] = "all"
+        else:
+            current_rule["protocol"] = rule["IpProtocol"]
+
+        current_rule["direction"] = direction
+        current_rule["port_range_min"] = rule.get("FromPort", -1)
+        current_rule["port_range_max"] = rule.get("ToPort", -1)
+
+        rules = []
+        if rule["IpRanges"] is not None:
+            for ip_range in rule["IpRanges"]:
+                r = current_rule.copy()
+                r["remote_ip_prefix"] = ip_range["CidrIp"]
+                rules.append(r)
+
+        elif rule["UserIdGroupPairs"] is not None:
+            if len(rule["UserIdGroupPairs"]) > 1:
+                ctx.warning("More than one security group source per rule is not support, only using the first group",
+                            groups=rule["UserIdGroupPairs"])
+
+            rgi = self._get_security_group(ctx, group_id=rule["UserIdGroupPairs"][0]["GroupId"])
+            current_rule["remote_group"] = rgi.name
+            rules.append(r)
+        else:
+            ctx.error("No idea what to do with this rule", rule=rule, direction=direction)
+
+        return rules
+
+    def _build_current_rules(self, ctx, security_group):
+        rules = []
+        for rule in security_group.ip_permissions:
+            current_rule = self._build_rule(ctx, rule, "ingress")
+            rules.extend(current_rule)
+
+        for rule in security_group.ip_permissions_egress:
+            current_rule = self._build_rule(ctx, rule, "egress")
+            rules.extend(current_rule)
+
+        return rules
+
+    def read_resource(self, ctx: HandlerContext, resource: SecurityGroup) -> None:
+        try:
+            vpc = self.get_vpc(resource.vpc)
+        except SkipResource:
+            # If the SG needs to be purged, on subsequent runs the VPC will be also gone (e.g. decommission)
+            if not resource.purged:
+                raise
+            else:
+                raise ResourcePurged()
+
+        ctx.set("vpc", vpc)
+
+        sgs = list(vpc.security_groups.filter(Filters=[{"Name": "group-name", "Values": [resource.name]},
+                                              {"Name": "vpc-id", "Values": [vpc.id]}]))
+        if len(sgs) == 0:
+            raise ResourcePurged()
+
+        sg = sgs[0]
+        ctx.set("sg", sg)
+        resource.purged = False
+        resource.description = sg.description
+        resource.rules = self._build_current_rules(ctx, sg)
+
+        # Verify if correct vpc
+        vpc = list(self._ec2.vpcs.filter(VpcIds=[sg.vpc_id]))
+        if len(vpc) == 0:
+            raise Exception("Invalid response from Amazon API?!?")
+
+        tags = [x for x in vpc[0].tags if x["Key"] == "Name"]
+        if len(tags) > 0:
+            resource.vpc = tags[0]["Value"]
+        else:
+            resource.vpc = "No name."
+
+    def get_vpc(self, name):
+        vpcs = list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
+
+        if len(vpcs) == 0:
+            raise SkipResource("The vpc for this security group is not available.")
+
+        elif len(vpcs) > 1:
+            raise SkipResource("Multiple VPCs with the same name tag found.")
+
+        return vpcs[0]
+
+    def _build_rule_arg(self, add_rule):
+        proto = add_rule["protocol"]
+        rule = {"FromPort": add_rule["port_range_min"], "ToPort": add_rule["port_range_max"],
+                "IpProtocol": proto if proto != "all" else "-1"}
+        if "remote_ip_prefix" in add_rule:
+            rule["IpRanges"] = [{"CidrIp": add_rule["remote_ip_prefix"]}]
+
+        elif "remote_group" in add_rule:
+            raise Exception("Todo!!")
+
+        return rule
+
+    def _update_rules(self, ctx, group, resource, current_rules, desired_rules):
+        """
+            Update the rules to the desired state
+        """
+        remove_rules = list(current_rules)
+        add_rules = list(desired_rules)
+
+        for new_rule in desired_rules:
+            for old_rule in current_rules:
+                if self._compare_rule(old_rule, new_rule):
+                    remove_rules.remove(old_rule)
+                    add_rules.remove(new_rule)
+                    break
+
+        for add_rule in add_rules:
+            rule = self._build_rule_arg(add_rule)
+            if add_rule["direction"] == "ingress":
+                group.authorize_ingress(IpPermissions=[rule])
+            else:
+                group.authorize_egress(IpPermissions=[rule])
+
+        for remove_rule in remove_rules:
+            rule = self._build_rule_arg(remove_rule)
+            if remove_rule["direction"] == "ingress":
+                group.revoke_ingress(IpPermissions=[rule])
+            else:
+                group.revoke_egress(IpPermissions=[rule])
+
+    def create_resource(self, ctx: HandlerContext, resource: SecurityGroup) -> None:
+        vpc = ctx.get("vpc")
+        sg = vpc.create_security_group(GroupName=resource.name, Description=resource.description, VpcId=vpc.id)
+        current_rules = self._build_current_rules(ctx, sg)
+        self._update_rules(ctx, sg, resource, current_rules, resource.rules)
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: SecurityGroup) -> None:
+        if "rules" in changes:
+            self._update_rules(ctx, ctx.get("sg"), resource, changes["rules"]["current"], changes["rules"]["desired"])
+        ctx.set_updated()
+
+    def delete_resource(self, ctx: HandlerContext, resource: SecurityGroup) -> None:
+        ctx.get("sg").delete()
+        ctx.set_purged()
