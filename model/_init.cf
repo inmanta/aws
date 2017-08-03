@@ -19,7 +19,7 @@ import web
 import ssh
 import ip
 
-amazonlinux = std::OS(name = "amazon", family = std::linux)
+amazonlinux = std::OS(name="amazon", family=std::linux)
 
 entity Provider:
     """
@@ -43,6 +43,8 @@ end
 entity AWSResource extends std::PurgeableResource, std::ManagedResource:
 end
 
+AWSResource.provider [1] -- Provider
+
 entity ELB extends AWSResource:
     """
         An ELB load balancer
@@ -59,13 +61,11 @@ end
 
 implement ELB using std::none
 
-ELB.provider [1] -- Provider.elb [0:]
-
 entity VMAttributes:
     string flavor
     string image
     string user_data
-    string subnet_id
+    string? subnet_id=null
     bool source_dest_check=true
 end
 
@@ -73,14 +73,15 @@ entity VirtualMachine extends VMAttributes, AWSResource:
     """
         This entity represents a virtual machine that is hosted on an IaaS
 
-        :param flavor An id representing the type of virtual machine
-        :param image An id that represents the image that needs to be used to
+        :attr flavor: An id representing the type of virtual machine
+        :attr image: An id that represents the image that needs to be used to
                         boot the virtual machine.
-        :param user_data A script that is booted on first boot
-        :param public_key_name The name of the public key that needs to be deployed
+        :attr user_data: A script that is booted on first boot
+        :attr subnet_id: Boot the vm in the subnet with this id. Either use this attribute
+                         or the subnet relation.
     """
     string name
-    dict tags = {}
+    dict tags={}
 end
 
 index VirtualMachine(provider, name)
@@ -94,8 +95,17 @@ implementation req for VirtualMachine:
     end
 end
 
-VirtualMachine.provider [1] -- Provider.virtual_machines [0:]
 VirtualMachine.public_key [1] -- ssh::Key
+VirtualMachine.subnet [0:1] -- Subnet
+"""
+    Boot the vm in this subnet. Either use this relation or provide a subnet id directly.
+"""
+
+VirtualMachine.security_groups [0:] -- SecurityGroup
+"""
+    The security groups that apply to this vm. If no group is supplied the default security group will 
+    be applied by EC2
+"""
 
 ELB.instances [0:] -- VirtualMachine
 
@@ -112,9 +122,13 @@ Host.public_key [1] -- ssh::Key
 Host.public_ip [0:1] -- ip::IP
 Host.private_ip [1] -- ip::IP
 
+Host.subnet [0:1] -- Subnet
+Host.security_groups [0:] -- SecurityGroup
+
 implementation awsHost for Host:
     self.vm = VirtualMachine(name=name, public_key=public_key, provider=provider, user_data=user_data, image=image,
-                             flavor=flavor, subnet_id=subnet_id, source_dest_check=source_dest_check)
+                             flavor=flavor, subnet_id=subnet_id, source_dest_check=source_dest_check, subnet=subnet,
+                             security_groups=security_groups)
     self.requires = self.vm
 
     self.private_ip = ip::IP(v4=std::getfact(vm, "ip_address"))
@@ -126,18 +140,133 @@ implement Host using std::hostDefaults, awsHost
 
 entity Volume extends AWSResource:
 	string name
-	string attachmentpoint = "/dev/sdb"
+	string attachmentpoint="/dev/sdb"
 	string availability_zone
-	bool encrypted = false
-	number size = 10
-	string volume_type = "gp2"
-	dict tags = {}
+	bool encrypted=false
+	number size=10
+	string volume_type="gp2"
+	dict tags={}
 end
 
-
-Volume.provider [1] -- Provider
-index Volume(provider,name)
+index Volume(provider, name)
 implement Volume using std::none
 
 VirtualMachine.volumes [0:] -- Volume.vm [0:1]
 
+typedef instance_tenancy as string matching /^(default|dedicated|host)$/
+
+entity VPC extends AWSResource:
+    """
+        A VPC on Amazon
+
+        :attr name: The name of the VPC. Inmanta uses this name to idenfiy the vpc. It is set as the name
+                    tag on the vpc resource.
+        :attr cidr_block: The IPv4 network range for the VPC, in CIDR notation. For example, 10.0.0.0/16.
+        :attr instance_tenancy: The tenancy options for instances launched into the VPC. For default , 
+                                instances are launched with shared tenancy by default. You can launch instances 
+                                with any tenancy into a shared tenancy VPC. For dedicated , instances are 
+                                launched as dedicated tenancy instances by default. You can only launch instances
+                                with a tenancy of dedicated or host into a dedicated tenancy VPC.
+    """
+    string name
+    ip::cidr cidr_block
+    instance_tenancy instance_tenancy="default"
+    bool enableDnsHostnames=false
+    bool enableDnsSupport=false
+end
+
+index VPC(provider, name)
+
+implement VPC using std::none
+
+entity Subnet extends AWSResource:
+    """
+        A subnet in a vpc
+
+        :attr name: The name of the subnet. Inmanta uses this name to idenfiy the subnet. It is set as the name
+                    tag on the subnet resource.
+        :attr availability_zone: The Availability Zone for the subnet.
+        :attr cidr_block: The IPv4 network range for the VPC, in CIDR notation. For example, 10.0.0.0/24.
+        :attr map_public_ip_on_launch: Specify true to indicate that network interfaces created in the specified subnet 
+                                       should be assigned a public IPv4 address. This includes a network interface that's 
+                                       created when launching an instance into the subnet (the instance therefore receives 
+                                       a public IPv4 address).
+    """
+    string name
+    string? availability_zone=null
+    ip::cidr cidr_block
+    bool map_public_ip_on_launch=false
+end
+
+index Subnet(provider, name)
+
+Subnet.vpc [1] -- VPC.subnets [0:]
+"""
+    The VPC the subnet is created in.
+"""
+
+implement Subnet using std::none
+
+entity InternetGateway extends AWSResource:
+    """
+        An Internet gateway for use with a VPC.
+
+    """
+    string name
+end
+
+index InternetGateway(provider, name)
+
+VPC.internet_gateway [0:1] -- InternetGateway.vpc [0:1]
+
+implement InternetGateway using std::none
+
+# Security group config
+typedef direction as string matching self == "ingress" or self == "egress"
+
+entity SecurityGroup extends AWSResource:
+    """
+        :param retries: A security group can only be deleted when it is no longer in use. The API confirms the delete of a virtual machine for example, but
+                        it might still be in progress. This results in a failure to delete the security group. To speed up deployments, the handler can 
+                        retry this number of times before skipping the resource.
+        :param wait: The number of seconds to wait between retries.
+    """
+    string description=""
+    string name
+    bool manage_all=true
+    number retries=10
+    number wait=5
+end
+
+index SecurityGroup(provider, name)
+
+implement SecurityGroup using std::none
+
+entity SecurityRule:
+    """
+        A filter rule in the a security group
+
+        :param ip_protocol The type of ip protocol to allow. Currently this support tcp/udp/icmp/sctp or all
+    """
+    ip::protocol ip_protocol
+    ip::port port_min=0
+    ip::port port_max=0
+    ip::port port=0
+    direction direction
+end
+
+entity IPrule extends SecurityRule:
+    ip::cidr remote_prefix
+end
+
+entity GroupRule extends SecurityRule:
+end
+
+GroupRule.remote_group [1] -- SecurityGroup
+
+implement IPrule using std::none
+implement GroupRule using std::none
+
+SecurityRule.group [1] -- SecurityGroup.rules [0:]
+
+SecurityGroup.vpc [1] -- VPC
