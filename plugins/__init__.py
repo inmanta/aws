@@ -299,8 +299,11 @@ class VirtualMachineHandler(AWSHandler):
         resource.flavor = instance.instance_type
         resource.image = instance.image_id
         resource.key_name = instance.key_name
+
+        root = intance.root_device_name
+
         resource.volumes = [x for x in [self.get_name_from_tag(volume.tags)
-                                        for volume in instance.volumes.all()] if x is not None]
+                                        for volume in instance.volumes.all() if volume.attachments[0].Device != root] if x is not None]
 
         tags = self.tags_amazon_to_internal(instance.tags)
         del tags["Name"]
