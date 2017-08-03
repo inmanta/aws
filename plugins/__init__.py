@@ -512,10 +512,10 @@ class VirtualMachineHandler(AWSHandler):
         resource.image = instance.image_id
         resource.key_name = instance.key_name
 
-        root = intance.root_device_name
+        root = instance.root_device_name
 
         resource.volumes = [x for x in [self.get_name_from_tag(volume.tags)
-                                        for volume in instance.volumes.all() if volume.attachments[0].Device != root] if x is not None]
+                                        for volume in instance.volumes.all() if volume.attachments[0]["Device"] != root] if x is not None]
         resource.subnet_id = instance.subnet_id
 
         if instance.subnet_id is not None:
