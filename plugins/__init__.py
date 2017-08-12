@@ -558,7 +558,7 @@ class VirtualMachineHandler(AWSHandler):
             vpc_id = subnet.vpc.id
         else:
             subnet_id = resource.subnet_id
-            subnets = self._ec2.subnets.filter(SubnetIds=[subnet_id])
+            subnets = list(self._ec2.subnets.filter(SubnetIds=[subnet_id]))
             if len(subnets) == 0:
                 raise SkipResource("Subnet %s does not exist" % subnet_id)
             vpc_id = subnets[0].vpc.id
@@ -666,7 +666,6 @@ class VirtualMachineHandler(AWSHandler):
 
 @provider("aws::Volume", name="volume")
 class VolumeHandler(AWSHandler):
-
     def read_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         instance = [x for x in self._ec2.volumes.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}])]
 
@@ -703,16 +702,20 @@ class VolumeHandler(AWSHandler):
                                             VolumeType=resource.volume_type,
                                             DryRun=False,
                                             TagSpecifications=[{"ResourceType": "volume", "Tags": tags}])
+
         if instances is None:
             ctx.set_status(const.ResourceState.failed)
             ctx.error("Requested one Volume but do not receive it.", instances=instances)
             return
 
+        ctx.set_created()
+
     def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
         raise SkipResource("Modifying a volume is not supported yet.")
 
     def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
-        pass
+        ctx.get("instance").delete()
+        ctx.set_purged()
 
 
 @provider("aws::VPC", name="ec2")

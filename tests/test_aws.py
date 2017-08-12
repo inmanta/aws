@@ -81,7 +81,7 @@ aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", 
     instances = [x for x in ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [name]}])
                  if x.state["Name"] != "terminated"]
 
-    assert len(instances) == 1
+    assert len(instances) == 0
 
 
 def test_vm_subnets(project):
@@ -436,7 +436,7 @@ aws::IPrule(group=sg_base, direction="ingress", ip_protocol="tcp", port_min=161,
     project.deploy_resource("aws::VPC")
 
 
-def test_Volume(project): 
+def test_volume(project): 
     project.compile("""
 import unittest
 import aws
@@ -445,4 +445,14 @@ provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
 volume = aws::Volume(name="test", provider=provider, availability_zone="a")
 """)
-    project.deploy_resource("aws::Volume") 
+    project.deploy_resource("aws::Volume")
+
+    project.compile("""
+import unittest
+import aws
+
+provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
+                         secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
+volume = aws::Volume(name="test", provider=provider, availability_zone="a", purged=true)
+""")
+    project.deploy_resource("aws::Volume")
