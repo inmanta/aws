@@ -18,8 +18,9 @@
 import web
 import ssh
 import ip
+import redhat
 
-amazonlinux = std::OS(name="amazon", family=std::linux)
+amazonlinux = std::OS(name="amazon", family=redhat::redhat)
 
 entity Provider:
     """
@@ -91,7 +92,7 @@ implement VirtualMachine using req
 implementation req for VirtualMachine:
     self.requires = self.provider.requires
     for volume in volumes:
-    	self.requires = volume
+        self.requires = volume
     end
 end
 
@@ -103,7 +104,7 @@ VirtualMachine.subnet [0:1] -- Subnet
 
 VirtualMachine.security_groups [0:] -- SecurityGroup
 """
-    The security groups that apply to this vm. If no group is supplied the default security group will 
+    The security groups that apply to this vm. If no group is supplied the default security group will
     be applied by EC2
 """
 
@@ -139,13 +140,13 @@ end
 implement Host using std::hostDefaults, awsHost
 
 entity Volume extends AWSResource:
-	string name
-	string attachmentpoint="/dev/sdb"
-	string availability_zone
-	bool encrypted=false
-	number size=10
-	string volume_type="gp2"
-	dict tags={}
+    string name
+    string attachmentpoint="/dev/sdb"
+    string availability_zone
+    bool encrypted=false
+    number size=10
+    string volume_type="gp2"
+    dict tags={}
 end
 
 index Volume(provider, name)
@@ -162,9 +163,9 @@ entity VPC extends AWSResource:
         :attr name: The name of the VPC. Inmanta uses this name to idenfiy the vpc. It is set as the name
                     tag on the vpc resource.
         :attr cidr_block: The IPv4 network range for the VPC, in CIDR notation. For example, 10.0.0.0/16.
-        :attr instance_tenancy: The tenancy options for instances launched into the VPC. For default , 
-                                instances are launched with shared tenancy by default. You can launch instances 
-                                with any tenancy into a shared tenancy VPC. For dedicated , instances are 
+        :attr instance_tenancy: The tenancy options for instances launched into the VPC. For default,
+                                instances are launched with shared tenancy by default. You can launch instances
+                                with any tenancy into a shared tenancy VPC. For dedicated , instances are
                                 launched as dedicated tenancy instances by default. You can only launch instances
                                 with a tenancy of dedicated or host into a dedicated tenancy VPC.
     """
@@ -187,9 +188,9 @@ entity Subnet extends AWSResource:
                     tag on the subnet resource.
         :attr availability_zone: The Availability Zone for the subnet.
         :attr cidr_block: The IPv4 network range for the VPC, in CIDR notation. For example, 10.0.0.0/24.
-        :attr map_public_ip_on_launch: Specify true to indicate that network interfaces created in the specified subnet 
-                                       should be assigned a public IPv4 address. This includes a network interface that's 
-                                       created when launching an instance into the subnet (the instance therefore receives 
+        :attr map_public_ip_on_launch: Specify true to indicate that network interfaces created in the specified subnet
+                                       should be assigned a public IPv4 address. This includes a network interface that's
+                                       created when launching an instance into the subnet (the instance therefore receives
                                        a public IPv4 address).
     """
     string name
@@ -227,7 +228,7 @@ typedef direction as string matching self == "ingress" or self == "egress"
 entity SecurityGroup extends AWSResource:
     """
         :param retries: A security group can only be deleted when it is no longer in use. The API confirms the delete of a virtual machine for example, but
-                        it might still be in progress. This results in a failure to delete the security group. To speed up deployments, the handler can 
+                        it might still be in progress. This results in a failure to delete the security group. To speed up deployments, the handler can
                         retry this number of times before skipping the resource.
         :param wait: The number of seconds to wait between retries.
     """
