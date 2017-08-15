@@ -19,6 +19,11 @@ import aws
 import ip
 
 entity ElasticSearch extends aws::AWSResource:
+    """
+        Amazon Elasticsearch Service (Amazon ES) is a managed service that makes it 
+        easy to create a domain and deploy, operate, and scale Elasticsearch clusters 
+        in the AWS Cloud.
+    """
     string domain_name
     string elasticsearch_version
     string instance_type
@@ -38,6 +43,10 @@ index ElasticSearch(provider, domain_name)
 implement ElasticSearch using std::none
 
 entity RDS extends aws::AWSResource:
+    """
+        Amazon Relational Database Service (Amazon RDS) is a web service that makes it easier
+        to set up, operate, and scale a relational database in the cloud.
+    """
     string name
     number allocated_storage=10
     string flavor="db.t2.small"
