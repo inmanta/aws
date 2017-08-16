@@ -227,7 +227,7 @@ class Volume(AWSResource):
     fields = ("name", "availability_zone", "encrypted", "size", "volume_type", "tags")
 
 
-@resource("aws::extra::ElasticSearch", agent="provider.name", id_attribute="domain_name")
+@resource("aws::analytics::ElasticSearch", agent="provider.name", id_attribute="domain_name")
 class ElasticSearch(AWSResource):
     fields = ("domain_name", "elasticsearch_version", "instance_type", "instance_count", "dedicated_master_enabled",
               "zone_awareness_enabled", "dedicated_master_type", "dedicated_master_count", "ebs_enabled",
@@ -308,7 +308,7 @@ class SecurityGroup(AWSResource):
         return resource.vpc.name
 
 
-@resource("aws::extra::RDS", agent="provider.name", id_attribute="name")
+@resource("aws::database::RDS", agent="provider.name", id_attribute="name")
 class RDS(AWSResource):
     fields = ("name", "allocated_storage", "flavor", "engine", "engine_version", "master_user_name",
               "master_user_password", "port", "public", "subnet_group", "tags")
@@ -735,7 +735,7 @@ class VolumeHandler(AWSHandler):
         ctx.set_purged()
 
 
-@provider("aws::extra::ElasticSearch", name="elasticsearch")
+@provider("aws::analytics::ElasticSearch", name="elasticsearch")
 class ElasticSearchHandler(AWSHandler):
 
     def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
@@ -795,9 +795,8 @@ class ElasticSearchHandler(AWSHandler):
         return facts
 
 
-@provider("aws::extra::RDS", name="elasticsearch")
+@provider("aws::database::RDS", name="elasticsearch")
 class RDSHandler(AWSHandler):
-
     def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
         AWSHandler.pre(self, ctx, resource)
         self._rds = self._session.client("rds")
