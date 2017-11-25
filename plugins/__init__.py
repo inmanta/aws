@@ -796,7 +796,7 @@ class ElasticSearchHandler(AWSHandler):
         if "DedicatedMasterCount" in instance["ElasticsearchClusterConfig"]:
             resource.dedicated_master_count = instance["ElasticsearchClusterConfig"]["DedicatedMasterCount"]
         else:
-            resource.dedicated_master_count =
+            resource.dedicated_master_count = 0
 
         resource.ebs_enabled = instance["EBSOptions"]["EBSEnabled"]
         if resource.ebs_enabled:
