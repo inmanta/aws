@@ -34,7 +34,6 @@ from inmanta.plugins import plugin
 from inmanta.resources import resource, PurgeableResource, ManagedResource
 from inmanta.execute.util import Unknown
 
-
 LOGGER = logging.getLogger(__name__)
 
 # Silence boto
@@ -230,6 +229,21 @@ class Volume(AWSResource):
 @resource("aws::analytics::ElasticSearch", agent="provider.name", id_attribute="domain_name")
 class ElasticSearch(AWSResource):
     fields = ("domain_name", "elasticsearch_version", "instance_type", "instance_count", "dedicated_master_enabled",
+              "zone_awareness_enabled", "dedicated_master_type", "dedicated_master_count", "ebs_enabled", "volume_type",
+              "volume_size", "access_policies", "automated_snapshot_start_hour")
+
+    @staticmethod
+    def get_access_policies(_, resource):
+        try:
+            return json.dumps(json.loads(resource.access_policies), sort_keys=True)
+        except:
+            print(resource.access_policies)
+            raise
+
+
+@resource("aws::analytics::ElasticSearch", agent="provider.name", id_attribute="domain_name")
+class ElasticSearch(AWSResource):
+    fields = ("domain_name", "elasticsearch_version", "instance_type", "instance_count", "dedicated_master_enabled",
               "zone_awareness_enabled", "dedicated_master_type", "dedicated_master_count", "ebs_enabled",
               "volume_type", "volume_size", "access_policies", "automated_snapshot_start_hour")
 
@@ -310,6 +324,12 @@ class SecurityGroup(AWSResource):
 
 @resource("aws::database::RDS", agent="provider.name", id_attribute="name")
 class RDS(AWSResource):
+    fields = ("name", "allocated_storage", "flavor", "engine", "engine_version", "master_user_name", "master_user_password",
+              "port", "public", "subnet_group", "tags")
+
+
+@resource("aws::database::RDS", agent="provider.name", id_attribute="name")
+class RDS(AWSResource):
     fields = ("name", "allocated_storage", "flavor", "engine", "engine_version", "master_user_name",
               "master_user_password", "port", "public", "subnet_group", "tags")
 
@@ -357,7 +377,6 @@ class ELBHandler(AWSHandler):
     """
         This class manages ELB instances on amazon ec2
     """
-
     def _get_name(self, vm):
         tags = vm.tags if vm.tags is not None else []
         for tag in tags:
@@ -624,7 +643,17 @@ class VirtualMachineHandler(AWSHandler):
                 self.attach_for_name(ctx, instance, volumename, resource.volume_attachment[volumename])
 
             todo -= 1
+
+        if "tags" in changes:
+            current = changes["tags"]["current"]
+            desired = changes["tags"]["desired"]
+            tochange = {k:v for k,v in desired.items() if k not in current or current[k] != v}
+            ctx.info("changing tags %(tags)s",tags=tochange)
+            instance.create_tags(Tags=self.tags_internal_to_amazon(tochange))
+            todo -= 1
+
         if todo > 0:
+            ctx.warning("attempting to modify running instance, diff %(diff)s", diff=changes)
             raise SkipResource("Modifying a running instance is not supported.")
 
     def attach_for_name(self, ctx: HandlerContext, instance, volumename, device):
@@ -764,7 +793,7 @@ class ElasticSearchHandler(AWSHandler):
         if "DedicatedMasterCount" in instance["ElasticsearchClusterConfig"]:
             resource.dedicated_master_count = instance["ElasticsearchClusterConfig"]["DedicatedMasterCount"]
         else:
-            resource.dedicated_master_count = ""
+            resource.dedicated_master_count =
 
         resource.ebs_enabled = instance["EBSOptions"]["EBSEnabled"]
         if resource.ebs_enabled:
@@ -775,9 +804,38 @@ class ElasticSearchHandler(AWSHandler):
         resource.automated_snapshot_start_hour = instance["SnapshotOptions"]["AutomatedSnapshotStartHour"]
 
     def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
-        raise SkipResource("Creating an ES is not supported yet.")
+        ElasticsearchClusterConfig = {
+                "InstanceType":resource.instance_type,
+                "InstanceCount": resource.instance_count,
+                "DedicatedMasterEnabled" :  resource.dedicated_master_enabled,
+                "ZoneAwarenessEnabled" :  resource.zone_awareness_enabled,
+            }
+
+        if resource.dedicated_master_enabled:
+            ElasticsearchClusterConfig["DedicatedMasterType"] = resource.dedicated_master_type
+            ElasticsearchClusterConfig["DedicatedMasterCount"] = resource.dedicated_master_count
+
+
+
+        self._es.create_elasticsearch_domain(
+            DomainName = resource.domain_name,
+            ElasticsearchVersion = resource.elasticsearch_version,
+            ElasticsearchClusterConfig = ElasticsearchClusterConfig,
+            EBSOptions = {
+                "EBSEnabled" : resource.ebs_enabled,
+                "VolumeType" : resource.volume_type,
+                "VolumeSize" : resource.volume_size
+            },
+            AccessPolicies = resource.access_policies,
+            SnapshotOptions = {
+                "AutomatedSnapshotStartHour" : resource.automated_snapshot_start_hour
+            }
+        )
+        ctx.info("Create new Elastic Search")
+        ctx.set_created()
 
     def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
+        ctx.info("Modifying a ES is not supported yet.  diff %(diff)s", diff=changes)
         raise SkipResource("Modifying a ES is not supported yet.")
 
     def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
@@ -837,17 +895,17 @@ class RDSHandler(AWSHandler):
     def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         db = self._rds.create_db_instance(
             DBInstanceIdentifier=resource.name,
-            AllocatedStorage=resource.allocated_storage,
-            DBInstanceClass=resource.flavor,
-            Engine=resource.engine,
-            MasterUsername=resource.master_user_name,
-            MasterUserPassword=resource.master_user_password,
-            DBSubnetGroupName=resource.subnet_group,
-            Port=resource.port,
-            EngineVersion=resource.engine_version,
-            PubliclyAccessible=resource.public,
-            Tags=self.tags_internal_to_amazon(resource.tags)
-        )
+            AllocatedStorage = resource.allocated_storage,
+            DBInstanceClass = resource.flavor,
+            Engine = resource.engine,
+            MasterUsername = resource.master_user_name,
+            MasterUserPassword = resource.master_user_password,
+            DBSubnetGroupName = resource.subnet_group,
+            Port = resource.port,
+            EngineVersion = resource.engine_version,
+            PubliclyAccessible = resource.public,
+            Tags = self.tags_internal_to_amazon(resource.tags)
+            )
         ctx.info("Create new db with id %(id)s", id=db["DBInstance"]["DBInstanceIdentifier"])
         ctx.set_created()
 
