@@ -184,7 +184,8 @@ key = ssh::Key(name="{0}", public_key="{1}")
 aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
                     subnet=subnet, name="test", purged=true)
 vpc = aws::VPC(name="{0}", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default", purged=true)
-subnet = aws::Subnet(name="{0}", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc, map_public_ip_on_launch=true, purged=true)
+subnet = aws::Subnet(name="{0}", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc,
+                     map_public_ip_on_launch=true, purged=true)
 aws::InternetGateway(name="{0}", provider=provider, vpc=vpc, purged=true)
         """.format(name, key))
 
@@ -436,7 +437,7 @@ aws::IPrule(group=sg_base, direction="ingress", ip_protocol="tcp", port_min=161,
     project.deploy_resource("aws::VPC")
 
 
-def test_volume(project): 
+def test_volume(project):
     project.compile("""
 import unittest
 import aws
@@ -445,14 +446,5 @@ provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
 volume = aws::Volume(name="test", provider=provider, availability_zone="a")
 """)
-    project.deploy_resource("aws::Volume")
 
-    project.compile("""
-import unittest
-import aws
-
-provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
-                         secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
-volume = aws::Volume(name="test", provider=provider, availability_zone="a", purged=true)
-""")
     project.deploy_resource("aws::Volume")

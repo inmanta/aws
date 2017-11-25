@@ -20,8 +20,6 @@ import ssh
 import ip
 import platform
 
-amazonlinux = std::OS(name="amazon", family=std::linux)
-
 entity Provider:
     """
         The configuration to access Amazon Web Services
@@ -68,6 +66,7 @@ entity VMAttributes extends platform::UserdataVM:
     string user_data
     string? subnet_id=null
     bool source_dest_check=true
+    bool ebs_optimized=false
     bool install_agent=false
 end
 
@@ -94,7 +93,7 @@ implement VirtualMachine using userData when install_agent
 implementation req for VirtualMachine:
     self.requires = self.provider.requires
     for volume in volumes:
-    	self.requires = volume
+        self.requires = volume
     end
 end
 
@@ -146,13 +145,13 @@ end
 implement Host using std::hostDefaults, awsHost
 
 entity Volume extends AWSResource:
-	string name
-	string attachmentpoint="/dev/sdb"
-	string availability_zone
-	bool encrypted=false
-	number size=10
-	string volume_type="gp2"
-	dict tags={}
+    string name
+    string attachmentpoint="/dev/sdb"
+    string availability_zone
+    bool encrypted=false
+    number size=10
+    string volume_type="gp2"
+    dict tags={}
 end
 
 index Volume(provider, name)

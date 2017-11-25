@@ -28,12 +28,11 @@ import binascii
 from Crypto.PublicKey import RSA
 
 from inmanta import const
-from inmanta.agent.handler import provider, ResourceHandler, CRUDHandler, HandlerContext, ResourcePurged, SkipResource
+from inmanta.agent.handler import provider, CRUDHandler, HandlerContext, ResourcePurged, SkipResource
 from inmanta.ast import OptionalValueException
 from inmanta.plugins import plugin
-from inmanta.resources import resource, PurgeableResource, ManagedResource, Resource
+from inmanta.resources import resource, PurgeableResource, ManagedResource
 from inmanta.execute.util import Unknown
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def pkcs1_unpad(text):
     return None
 
 
-def long_to_bytes (val, endianness='big'):
+def long_to_bytes(val, endianness='big'):
     # From http://stackoverflow.com/questions/8730927/convert-python-long-int-to-fixed-size-byte-array
 
     # one (1) hex digit per four (4) bits
@@ -84,20 +83,20 @@ def long_to_bytes (val, endianness='big'):
 
 def decrypt_password(rsa_key, password):
     # Undo the whatever-they-do to the ciphertext to get the integer
-    encryptedData = base64.b64decode(password)
-    ciphertext = int(binascii.hexlify(encryptedData), 16)
+    encrypted_data = base64.b64decode(password)
+    ciphertext = int(binascii.hexlify(encrypted_data), 16)
 
     # Decrypt it
     plaintext = rsa_key.decrypt(ciphertext)
 
     # This is the annoying part.  long -> byte array
-    decryptedData = long_to_bytes(plaintext)
+    decrypted_data = long_to_bytes(plaintext)
 
     # Now Unpad it
-    unpaddedData = pkcs1_unpad(decryptedData)
+    unpadded_data = pkcs1_unpad(decrypted_data)
 
     # Done
-    return unpaddedData
+    return unpadded_data
 
 
 @plugin
@@ -174,7 +173,7 @@ class ELB(AWSResource):
 @resource("aws::VirtualMachine", agent="provider.name", id_attribute="name")
 class VirtualMachine(AWSResource):
     fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check", "tags",
-              "subnet", "security_groups", "volumes", "volume_attachment")
+              "subnet", "security_groups", "volumes", "volume_attachment", "ebs_optimized")
 
     @staticmethod
     def get_key_name(_, resource):
@@ -225,6 +224,32 @@ class VirtualMachine(AWSResource):
 @resource("aws::Volume", agent="provider.name", id_attribute="name")
 class Volume(AWSResource):
     fields = ("name", "availability_zone", "encrypted", "size", "volume_type", "tags")
+
+
+@resource("aws::analytics::ElasticSearch", agent="provider.name", id_attribute="domain_name")
+class ElasticSearch(AWSResource):
+    fields = ("domain_name", "elasticsearch_version", "instance_type", "instance_count", "dedicated_master_enabled",
+              "zone_awareness_enabled", "dedicated_master_type", "dedicated_master_count", "ebs_enabled", "volume_type",
+              "volume_size", "access_policies", "automated_snapshot_start_hour")
+
+    @staticmethod
+    def get_access_policies(_, resource):
+        try:
+            return json.dumps(json.loads(resource.access_policies), sort_keys=True)
+        except:
+            print(resource.access_policies)
+            raise
+
+
+@resource("aws::analytics::ElasticSearch", agent="provider.name", id_attribute="domain_name")
+class ElasticSearch(AWSResource):
+    fields = ("domain_name", "elasticsearch_version", "instance_type", "instance_count", "dedicated_master_enabled",
+              "zone_awareness_enabled", "dedicated_master_type", "dedicated_master_count", "ebs_enabled",
+              "volume_type", "volume_size", "access_policies", "automated_snapshot_start_hour")
+
+    @staticmethod
+    def get_access_policies(_, resource):
+        return json.dumps(json.loads(resource.access_policies), sort_keys=True)
 
 
 @resource("aws::VPC", agent="provider.name", id_attribute="name")
@@ -297,8 +322,19 @@ class SecurityGroup(AWSResource):
         return resource.vpc.name
 
 
-class AWSHandler(CRUDHandler):
+@resource("aws::database::RDS", agent="provider.name", id_attribute="name")
+class RDS(AWSResource):
+    fields = ("name", "allocated_storage", "flavor", "engine", "engine_version", "master_user_name", "master_user_password",
+              "port", "public", "subnet_group", "tags")
 
+
+@resource("aws::database::RDS", agent="provider.name", id_attribute="name")
+class RDS(AWSResource):
+    fields = ("name", "allocated_storage", "flavor", "engine", "engine_version", "master_user_name",
+              "master_user_password", "port", "public", "subnet_group", "tags")
+
+
+class AWSHandler(CRUDHandler):
     def __init__(self, agent, io=None) -> None:
         CRUDHandler.__init__(self, agent, io=io)
 
@@ -341,7 +377,6 @@ class ELBHandler(AWSHandler):
     """
         This class manages ELB instances on amazon ec2
     """
-
     def _get_name(self, vm):
         tags = vm.tags if vm.tags is not None else []
         for tag in tags:
@@ -511,11 +546,13 @@ class VirtualMachineHandler(AWSHandler):
         resource.flavor = instance.instance_type
         resource.image = instance.image_id
         resource.key_name = instance.key_name
+        resource.ebs_optimized = instance.ebs_optimized
 
         root = instance.root_device_name
 
         resource.volumes = [x for x in [self.get_name_from_tag(volume.tags)
-                                        for volume in instance.volumes.all() if volume.attachments[0]["Device"] != root] if x is not None]
+                                        for volume in instance.volumes.all()
+                                        if volume.attachments[0]["Device"] != root] if x is not None]
         resource.subnet_id = instance.subnet_id
 
         if instance.subnet_id is not None:
@@ -575,9 +612,10 @@ class VirtualMachineHandler(AWSHandler):
         ctx.info("args %(args)s", args=callargs)
 
         instances = self._ec2.create_instances(ImageId=resource.image, KeyName=resource.key_name, UserData=resource.user_data,
-                                              InstanceType=resource.flavor, SubnetId=subnet_id,
-                                              MinCount=1, MaxCount=1,
-                                              TagSpecifications=[{"ResourceType": "instance", "Tags": tags}], **callargs)
+                                               InstanceType=resource.flavor, SubnetId=subnet_id,
+                                               MinCount=1, MaxCount=1,
+                                               TagSpecifications=[{"ResourceType": "instance", "Tags": tags}],
+                                               EbsOptimized=resource.ebs_optimized, **callargs)
         if len(instances) != 1:
             ctx.set_status(const.ResourceState.failed)
             ctx.error("Requested one instance but do not receive it.", instances=instances)
@@ -586,7 +624,7 @@ class VirtualMachineHandler(AWSHandler):
         instance = instances[0]
 
         for volumename in resource.volumes:
-            self.attachForName(ctx, instance, volumename, resource.volume_attachment[volumename])
+            self.attach_for_name(ctx, instance, volumename, resource.volume_attachment[volumename])
 
         if not resource.source_dest_check:
             instance.modify_attribute(Attribute="sourceDestCheck", Value="False")
@@ -604,18 +642,29 @@ class VirtualMachineHandler(AWSHandler):
             if(len(toremove) > 0):
                 ctx.warning("Handler will not detach storage!")
             for volumename in toadd:
-                self.attachForName(ctx, instance, volumename, resource.volume_attachment[volumename])
+                self.attach_for_name(ctx, instance, volumename, resource.volume_attachment[volumename])
 
             todo -= 1
+
+        if "tags" in changes:
+            current = changes["tags"]["current"]
+            desired = changes["tags"]["desired"]
+            tochange = {k:v for k,v in desired.items() if k not in current or current[k] != v}
+            ctx.info("changing tags %(tags)s",tags=tochange)
+            instance.create_tags(Tags=self.tags_internal_to_amazon(tochange))
+            todo -= 1
+
         if todo > 0:
+            ctx.warning("attempting to modify running instance, diff %(diff)s", diff=changes)
             raise SkipResource("Modifying a running instance is not supported.")
 
-    def attachForName(self, ctx: HandlerContext, instance, volumename, device):
+    def attach_for_name(self, ctx: HandlerContext, instance, volumename, device):
         volume = [x for x in self._ec2.volumes.filter(Filters=[{"Name": "tag:Name", "Values": [volumename]}])]
 
         if len(volume) != 1:
-            ctx.error("Found more than one volume with tag Name %(name)s", name=resource.name, instances=instance)
+            ctx.error("Found more than one volume with tag Name %(name)s", name=volumename, instances=instance, volumes=volume)
             raise SkipResource()
+
         volume = volume[0]
 
         instance.attach_volume(VolumeId=volume.id, Device=device)
@@ -718,6 +767,203 @@ class VolumeHandler(AWSHandler):
         ctx.set_purged()
 
 
+@provider("aws::analytics::ElasticSearch", name="elasticsearch")
+class ElasticSearchHandler(AWSHandler):
+
+    def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
+        AWSHandler.pre(self, ctx, resource)
+        self._es = self._session.client("es")
+
+    def read_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        try:
+            instance = self._es.describe_elasticsearch_domain(DomainName=resource.domain_name)["DomainStatus"]
+        except self._es.exceptions.ResourceNotFoundException:
+            raise ResourcePurged()
+
+        ctx.warning("Found instance %(mytype)s %(instance)s", mytype=str(type(instance)), instance=instance)
+        ctx.set("instance", instance)
+
+        resource.elasticsearch_version = instance["ElasticsearchVersion"]
+        resource.instance_type = instance["ElasticsearchClusterConfig"]["InstanceType"]
+        resource.instance_count = instance["ElasticsearchClusterConfig"]["InstanceCount"]
+        resource.dedicated_master_enabled = instance["ElasticsearchClusterConfig"]["DedicatedMasterEnabled"]
+        resource.zone_awareness_enabled = instance["ElasticsearchClusterConfig"]["ZoneAwarenessEnabled"]
+        if "DedicatedMasterType" in instance["ElasticsearchClusterConfig"]:
+            resource.dedicated_master_type = instance["ElasticsearchClusterConfig"]["DedicatedMasterType"]
+        else:
+            resource.dedicated_master_type = ""
+
+        if "DedicatedMasterCount" in instance["ElasticsearchClusterConfig"]:
+            resource.dedicated_master_count = instance["ElasticsearchClusterConfig"]["DedicatedMasterCount"]
+        else:
+            resource.dedicated_master_count = 0
+
+        resource.ebs_enabled = instance["EBSOptions"]["EBSEnabled"]
+        if resource.ebs_enabled:
+            resource.volume_type = instance["EBSOptions"]["VolumeType"]
+            resource.volume_size = instance["EBSOptions"]["VolumeSize"]
+
+        resource.access_policies = json.dumps(json.loads(instance["AccessPolicies"]), sort_keys=True)
+        resource.automated_snapshot_start_hour = instance["SnapshotOptions"]["AutomatedSnapshotStartHour"]
+
+    def convert_resource(self, resource, update=True):
+        ElasticsearchClusterConfig = {
+            "InstanceType":resource.instance_type,
+            "InstanceCount": resource.instance_count,
+            "DedicatedMasterEnabled":  resource.dedicated_master_enabled,
+            "ZoneAwarenessEnabled":  resource.zone_awareness_enabled,
+        }
+
+        if resource.dedicated_master_enabled:
+            ElasticsearchClusterConfig["DedicatedMasterType"] = resource.dedicated_master_type
+            ElasticsearchClusterConfig["DedicatedMasterCount"] = resource.dedicated_master_count
+
+        out = {
+            "DomainName" : resource.domain_name,
+            "ElasticsearchVersion" : resource.elasticsearch_version,
+            "ElasticsearchClusterConfig" : ElasticsearchClusterConfig,
+            "EBSOptions" : {
+                "EBSEnabled" : resource.ebs_enabled,
+                "VolumeType" : resource.volume_type,
+                "VolumeSize" : resource.volume_size
+            },
+            "AccessPolicies" : resource.access_policies,
+            "SnapshotOptions" : {
+                "AutomatedSnapshotStartHour" : resource.automated_snapshot_start_hour
+            }
+        }
+
+        if update:
+            del out["ElasticsearchVersion"]
+        return out
+
+    def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        ElasticsearchClusterConfig = {
+                "InstanceType":resource.instance_type,
+                "InstanceCount": resource.instance_count,
+                "DedicatedMasterEnabled" :  resource.dedicated_master_enabled,
+                "ZoneAwarenessEnabled" :  resource.zone_awareness_enabled,
+            }
+
+        if resource.dedicated_master_enabled:
+            ElasticsearchClusterConfig["DedicatedMasterType"] = resource.dedicated_master_type
+            ElasticsearchClusterConfig["DedicatedMasterCount"] = resource.dedicated_master_count
+
+
+
+        self._es.create_elasticsearch_domain(
+            DomainName = resource.domain_name,
+            ElasticsearchVersion = resource.elasticsearch_version,
+            ElasticsearchClusterConfig = ElasticsearchClusterConfig,
+            EBSOptions = {
+                "EBSEnabled" : resource.ebs_enabled,
+                "VolumeType" : resource.volume_type,
+                "VolumeSize" : resource.volume_size
+            },
+            AccessPolicies = resource.access_policies,
+            SnapshotOptions = {
+                "AutomatedSnapshotStartHour" : resource.automated_snapshot_start_hour
+            }
+        )
+        ctx.info("Create new Elastic Search")
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
+        ctx.info("pushing diff %(diff)s", diff=changes)
+        self._es.update_elasticsearch_domain_config(**self.convert_resource(resource))
+        ctx.set_updated()
+
+    def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        pass
+
+    def facts(self, ctx, resource):
+        facts = {}
+        try:
+            instance = self._es.describe_elasticsearch_domain(DomainName=resource.domain_name)["DomainStatus"]
+            facts["endpoint"] = instance["Endpoint"]
+            facts["arn"] = instance["ARN"]
+            facts["id"] = instance["DomainId"]
+        except self._es.exceptions.ResourceNotFoundException:
+            return facts
+        return facts
+
+
+@provider("aws::database::RDS", name="elasticsearch")
+class RDSHandler(AWSHandler):
+    def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
+        AWSHandler.pre(self, ctx, resource)
+        self._rds = self._session.client("rds")
+
+    def read_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        try:
+            instances = self._rds.describe_db_instances(DBInstanceIdentifier=resource.name)["DBInstances"]
+        except Exception:
+            raise ResourcePurged()
+
+        if len(instances) == 0:
+            raise ResourcePurged()
+
+        elif len(instances) > 1:
+            ctx.info("Found more than one RDS instance with name %(name)s", name=resource.name, instances=instances)
+            raise SkipResource()
+
+        instance = instances[0]
+
+        ctx.warning("Found instance %(mytype)s %(instance)s", mytype=str(type(instance)), instance=instance)
+        ctx.set("instance", instance)
+
+        resource.flavor = instance["DBInstanceClass"]
+        resource.allocated_storage = instance["AllocatedStorage"]
+        resource.engine = instance["Engine"]
+        resource.engine_version = instance["EngineVersion"]
+        resource.master_user_name = instance["MasterUsername"]
+        resource.subnet_group = instance["DBSubnetGroup"]["DBSubnetGroupName"]
+        resource.port = instance["Endpoint"]["Port"]
+        resource.public = instance["PubliclyAccessible"]
+
+        arn = instance["DBInstanceArn"]
+
+        tags = self._rds.list_tags_for_resource(ResourceName=arn)['TagList']
+
+        resource.tags = self.tags_amazon_to_internal(tags)
+
+    def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        db = self._rds.create_db_instance(
+            DBInstanceIdentifier=resource.name,
+            AllocatedStorage = resource.allocated_storage,
+            DBInstanceClass = resource.flavor,
+            Engine = resource.engine,
+            MasterUsername = resource.master_user_name,
+            MasterUserPassword = resource.master_user_password,
+            DBSubnetGroupName = resource.subnet_group,
+            Port = resource.port,
+            EngineVersion = resource.engine_version,
+            PubliclyAccessible = resource.public,
+            Tags = self.tags_internal_to_amazon(resource.tags)
+            )
+        ctx.info("Create new db with id %(id)s", id=db["DBInstance"]["DBInstanceIdentifier"])
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
+        raise SkipResource("Modifying a RDS is not supported yet.")
+
+    def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        pass
+
+    def facts(self, ctx, resource):
+        facts = {}
+        instances = self._rds.describe_db_instances(DBInstanceIdentifier=resource.name)["DBInstances"]
+
+        if len(instances) != 1:
+            return facts
+
+        instance = instances[0]
+
+        facts["endpoint"] = instance["Endpoint"]["Address"]
+        facts["arn"] = instance["DBInstanceArn"]
+        return facts
+
+
 @provider("aws::VPC", name="ec2")
 class VPCHandler(AWSHandler):
     def _get_vpc(self, name):
@@ -804,7 +1050,7 @@ class SubnetHandler(AWSHandler):
         subnet = ctx.get("subnet")
         if "map_public_ip_on_launch" in changes:
             subnet.meta.client.modify_subnet_attribute(SubnetId=subnet.id,
-                                              MapPublicIpOnLaunch={"Value": resource.map_public_ip_on_launch})
+                                                       MapPublicIpOnLaunch={"Value": resource.map_public_ip_on_launch})
             ctx.set_updated()
 
     def delete_resource(self, ctx: HandlerContext, resource: Subnet) -> None:

@@ -1,0 +1,43 @@
+"""
+    Copyright 2017 Inmanta
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+    Contact: code@inmanta.com
+"""
+import aws
+import ip
+
+entity ElasticSearch extends aws::AWSResource:
+    """
+        Amazon Elasticsearch Service (Amazon ES) is a managed service that makes it
+        easy to create a domain and deploy, operate, and scale Elasticsearch clusters
+        in the AWS Cloud.
+    """
+    string domain_name
+    string elasticsearch_version
+    string instance_type
+    number instance_count=1
+    bool dedicated_master_enabled=false
+    bool zone_awareness_enabled=false
+    string dedicated_master_type=""
+    number dedicated_master_count=1
+    bool ebs_enabled=true
+    string volume_type="gp2"
+    number volume_size
+    string access_policies
+    number automated_snapshot_start_hour=0
+end
+
+index ElasticSearch(provider, domain_name)
+implement ElasticSearch using std::none
