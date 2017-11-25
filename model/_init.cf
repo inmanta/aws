@@ -18,9 +18,7 @@
 import web
 import ssh
 import ip
-import redhat
-
-amazonlinux = std::OS(name="amazon", family=redhat::redhat)
+import platform
 
 entity Provider:
     """
@@ -50,8 +48,8 @@ entity ELB extends AWSResource:
     """
         An ELB load balancer
 
-        :param purged The state of the loadbalancer
-        :param purge_on_delete Purge the loadbalancer when it is no longer included in the configuration model.
+        :attr purged The state of the loadbalancer
+        :attr purge_on_delete Purge the loadbalancer when it is no longer included in the configuration model.
     """
     string name
     string security_group="default"
@@ -62,12 +60,13 @@ end
 
 implement ELB using std::none
 
-entity VMAttributes:
+entity VMAttributes extends platform::UserdataVM:
     string flavor
     string image
     string user_data
     string? subnet_id=null
     bool source_dest_check=true
+    bool install_agent=false
 end
 
 entity VirtualMachine extends VMAttributes, AWSResource:
@@ -88,6 +87,7 @@ end
 index VirtualMachine(provider, name)
 
 implement VirtualMachine using req
+implement VirtualMachine using userData when install_agent
 
 implementation req for VirtualMachine:
     self.requires = self.provider.requires
@@ -126,6 +126,10 @@ Host.private_ip [1] -- ip::IP
 Host.subnet [0:1] -- Subnet
 Host.security_groups [0:] -- SecurityGroup
 
+implementation userData for platform::UserdataVM:
+    platform::UserdataBootstrap(vm=self)
+end
+
 implementation awsHost for Host:
     self.vm = VirtualMachine(name=name, public_key=public_key, provider=provider, user_data=user_data, image=image,
                              flavor=flavor, subnet_id=subnet_id, source_dest_check=source_dest_check, subnet=subnet,
@@ -163,7 +167,7 @@ entity VPC extends AWSResource:
         :attr name: The name of the VPC. Inmanta uses this name to idenfiy the vpc. It is set as the name
                     tag on the vpc resource.
         :attr cidr_block: The IPv4 network range for the VPC, in CIDR notation. For example, 10.0.0.0/16.
-        :attr instance_tenancy: The tenancy options for instances launched into the VPC. For default,
+        :attr instance_tenancy: The tenancy options for instances launched into the VPC. For default ,
                                 instances are launched with shared tenancy by default. You can launch instances
                                 with any tenancy into a shared tenancy VPC. For dedicated , instances are
                                 launched as dedicated tenancy instances by default. You can only launch instances
