@@ -66,6 +66,7 @@ entity VMAttributes extends platform::UserdataVM:
     string user_data
     string? subnet_id=null
     bool source_dest_check=true
+    bool ebs_optimized=false
     bool install_agent=false
 end
 

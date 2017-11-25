@@ -173,7 +173,7 @@ class ELB(AWSResource):
 @resource("aws::VirtualMachine", agent="provider.name", id_attribute="name")
 class VirtualMachine(AWSResource):
     fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check", "tags",
-              "subnet", "security_groups", "volumes", "volume_attachment")
+              "subnet", "security_groups", "volumes", "volume_attachment", "ebs_optimized")
 
     @staticmethod
     def get_key_name(_, resource):
@@ -546,6 +546,7 @@ class VirtualMachineHandler(AWSHandler):
         resource.flavor = instance.instance_type
         resource.image = instance.image_id
         resource.key_name = instance.key_name
+        resource.ebs_optimized = instance.ebs_optimized
 
         root = instance.root_device_name
 
@@ -613,7 +614,8 @@ class VirtualMachineHandler(AWSHandler):
         instances = self._ec2.create_instances(ImageId=resource.image, KeyName=resource.key_name, UserData=resource.user_data,
                                                InstanceType=resource.flavor, SubnetId=subnet_id,
                                                MinCount=1, MaxCount=1,
-                                               TagSpecifications=[{"ResourceType": "instance", "Tags": tags}], **callargs)
+                                               TagSpecifications=[{"ResourceType": "instance", "Tags": tags}],
+                                               EbsOptimized=resource.ebs_optimized, **callargs)
         if len(instances) != 1:
             ctx.set_status(const.ResourceState.failed)
             ctx.error("Requested one instance but do not receive it.", instances=instances)
@@ -660,8 +662,9 @@ class VirtualMachineHandler(AWSHandler):
         volume = [x for x in self._ec2.volumes.filter(Filters=[{"Name": "tag:Name", "Values": [volumename]}])]
 
         if len(volume) != 1:
-            ctx.error("Found more than one volume with tag Name %(name)s", name=resource.name, instances=instance)
+            ctx.error("Found more than one volume with tag Name %(name)s", name=volumename, instances=instance, volumes=volume)
             raise SkipResource()
+
         volume = volume[0]
 
         instance.attach_volume(VolumeId=volume.id, Device=device)
@@ -803,6 +806,37 @@ class ElasticSearchHandler(AWSHandler):
         resource.access_policies = json.dumps(json.loads(instance["AccessPolicies"]), sort_keys=True)
         resource.automated_snapshot_start_hour = instance["SnapshotOptions"]["AutomatedSnapshotStartHour"]
 
+    def convert_resource(self, resource, update=True):
+        ElasticsearchClusterConfig = {
+            "InstanceType":resource.instance_type,
+            "InstanceCount": resource.instance_count,
+            "DedicatedMasterEnabled":  resource.dedicated_master_enabled,
+            "ZoneAwarenessEnabled":  resource.zone_awareness_enabled,
+        }
+
+        if resource.dedicated_master_enabled:
+            ElasticsearchClusterConfig["DedicatedMasterType"] = resource.dedicated_master_type
+            ElasticsearchClusterConfig["DedicatedMasterCount"] = resource.dedicated_master_count
+
+        out = {
+            "DomainName" : resource.domain_name,
+            "ElasticsearchVersion" : resource.elasticsearch_version,
+            "ElasticsearchClusterConfig" : ElasticsearchClusterConfig,
+            "EBSOptions" : {
+                "EBSEnabled" : resource.ebs_enabled,
+                "VolumeType" : resource.volume_type,
+                "VolumeSize" : resource.volume_size
+            },
+            "AccessPolicies" : resource.access_policies,
+            "SnapshotOptions" : {
+                "AutomatedSnapshotStartHour" : resource.automated_snapshot_start_hour
+            }
+        }
+
+        if update:
+            del out["ElasticsearchVersion"]
+        return out
+
     def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         ElasticsearchClusterConfig = {
                 "InstanceType":resource.instance_type,
@@ -835,8 +869,9 @@ class ElasticSearchHandler(AWSHandler):
         ctx.set_created()
 
     def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
-        ctx.info("Modifying a ES is not supported yet.  diff %(diff)s", diff=changes)
-        raise SkipResource("Modifying a ES is not supported yet.")
+        ctx.info("pushing diff %(diff)s", diff=changes)
+        self._es.update_elasticsearch_domain_config(**self.convert_resource(resource))
+        ctx.set_updated()
 
     def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         pass
