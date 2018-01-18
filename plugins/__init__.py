@@ -173,7 +173,7 @@ class ELB(AWSResource):
 @resource("aws::VirtualMachine", agent="provider.name", id_attribute="name")
 class VirtualMachine(AWSResource):
     fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check", "tags",
-              "subnet", "security_groups", "volumes", "volume_attachment", "ebs_optimized")
+              "subnet", "security_groups", "volumes", "volume_attachment", "ebs_optimized", "ignore_extra_volumes", "ignore_wrong_image")
 
     @staticmethod
     def get_key_name(_, resource):
@@ -639,12 +639,11 @@ class VirtualMachineHandler(AWSHandler):
             desired = changes["volumes"]["desired"]
             toadd = set(desired) - set(current)
             toremove = set(current) - set(desired)
-            if(len(toremove) > 0):
+            if(len(toremove) > 0 and not resource.ignore_extra_volumes):
                 ctx.warning("Handler will not detach storage!")
             for volumename in toadd:
                 self.attach_for_name(ctx, instance, volumename, resource.volume_attachment[volumename])
-
-            todo -= 1
+                todo -= 1
 
         if "tags" in changes:
             current = changes["tags"]["current"]
@@ -652,6 +651,9 @@ class VirtualMachineHandler(AWSHandler):
             tochange = {k:v for k,v in desired.items() if k not in current or current[k] != v}
             ctx.info("changing tags %(tags)s",tags=tochange)
             instance.create_tags(Tags=self.tags_internal_to_amazon(tochange))
+            todo -= 1
+        
+        if "image" in changes and resource.ignore_wrong_image:
             todo -= 1
 
         if todo > 0:

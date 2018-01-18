@@ -68,6 +68,9 @@ entity VMAttributes extends platform::UserdataVM:
     bool source_dest_check=true
     bool ebs_optimized=false
     bool install_agent=false
+
+    bool ignore_extra_volumes = false
+    bool ignore_wrong_image = false
 end
 
 entity VirtualMachine extends VMAttributes, AWSResource:
