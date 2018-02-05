@@ -1,5 +1,5 @@
 """
-    Copyright 2017 Inmanta
+    Copyright 2018 Inmanta
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -269,6 +269,15 @@ class Subnet(AWSResource):
 @resource("aws::InternetGateway", agent="provider.name", id_attribute="name")
 class InternetGateway(AWSResource):
     fields = ("name", "vpc")
+
+    @staticmethod
+    def get_vpc(_, resource):
+        return resource.vpc.name
+
+
+@resource("aws::Route", agent="provider.name", id_attribute="destination")
+class Route(AWSResource):
+    fields = ("destination", "nexthop", "vpc")
 
     @staticmethod
     def get_vpc(_, resource):
@@ -1001,6 +1010,84 @@ class VPCHandler(AWSHandler):
         ctx.set_purged()
 
 
+@provider("aws::Route", name="ec2")
+class RouteHandler(AWSHandler):
+    def _get_vpc(self, name):
+        return list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
+
+    def read_resource(self, ctx: HandlerContext, resource: Route) -> None:
+        vpcs = self._get_vpc(resource.vpc)
+        if len(vpcs) == 0:
+            ctx.info("Unable to find vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
+            raise SkipResource()
+
+        elif len(vpcs) > 1:
+            ctx.info("Found more than one vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
+            raise SkipResource()
+
+        vpc = vpcs[0]
+        ctx.set("vpc", vpc)
+
+        # Find the ENI that is associated with the desired nexthop
+        enis = list(vpc.network_interfaces.filter(Filters=[{"Name": "private-ip-address", "Values": [resource.nexthop]}]))
+
+        if len(enis) == 0:
+            ctx.info("No ENI found with private ip %(ip)s to route to in vpc tag Name %(name)s.",
+                     name=resource.vpc, ip=resource.nexthop)
+            raise SkipResource()
+
+        elif len(enis) > 1:
+            raise Exception("Found more than one ENI with the same private ip, this should not happen")
+
+        eni = enis[0]
+        ctx.set("eni", eni)
+
+        # Find the route entry in the main routing table of the VPC
+        route_tables = list(vpc.route_tables.all())
+        if len(route_tables) > 1:
+            ctx.info("Found more than one route table in vpc with tag Name %(name)s. Only one is supported currently.",
+                     name=resource.vpc)
+            raise SkipResource()
+
+        route_table = route_tables[0]
+        ctx.set("route_table", route_table)
+
+        route = None
+        for rt in route_table.routes:
+            if rt.destination_cidr_block == resource.destination:
+                route = rt
+                break
+
+        if route is None:
+            raise ResourcePurged()
+
+        ctx.set("route", route)
+
+        if route.network_interface_id != eni.id:
+            resource.nexthop = ""
+
+        resource.purged = False
+
+    def create_resource(self, ctx: HandlerContext, resource: Route) -> None:
+        route_table = ctx.get("route_table")
+        eni = ctx.get("eni")
+        route_table.create_route(DestinationCidrBlock=resource.destination, NetworkInterfaceId=eni.id)
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: Route) -> None:
+        rt = ctx.get("route")
+        rt.delete()
+        route_table = ctx.get("route_table")
+        eni = ctx.get("eni")
+        route_table.create_route(DestinationCidrBlock=resource.destination, NetworkInterfaceId=eni.id)
+        ctx.set_updated()
+
+    def delete_resource(self, ctx: HandlerContext, resource: Route) -> None:
+        rt = ctx.get("route")
+        rt.delete()
+        ctx.set_purged()
+
+
 @provider("aws::Subnet", name="ec2")
 class SubnetHandler(AWSHandler):
     def read_resource(self, ctx: HandlerContext, resource: Subnet) -> None:
@@ -1037,7 +1124,16 @@ class SubnetHandler(AWSHandler):
             args["AvailabilityZone"] = resource.availability_zone
 
         subnet = self._ec2.create_subnet(**args)
-        subnet.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+
+        # This method tends to hit eventual consistency problem returning an error that the subnet does not exist
+        tries = 5
+        while tries > 0:
+            try:
+                time.sleep(1)
+                subnet.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+            except botocore.exceptions.ClientError:
+                pass
+            tries -= 1
 
         if subnet.map_public_ip_on_launch != resource.map_public_ip_on_launch:
             subnet.meta.client.modify_subnet_attribute(SubnetId=subnet.id,
