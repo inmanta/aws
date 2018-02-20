@@ -71,6 +71,10 @@ entity VMAttributes extends platform::UserdataVM:
 
     bool ignore_extra_volumes = false
     bool ignore_wrong_image = false
+
+    number root_volume_size = 16
+    string root_volume_type = "gp2"
+
 end
 
 entity VirtualMachine extends VMAttributes, AWSResource:

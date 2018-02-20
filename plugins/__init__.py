@@ -25,7 +25,7 @@ import boto3
 import botocore
 import base64
 import binascii
-from Crypto.PublicKey import RSA
+#from Crypto.PublicKey import RSA
 
 from inmanta import const
 from inmanta.agent.handler import provider, CRUDHandler, HandlerContext, ResourcePurged, SkipResource
@@ -173,7 +173,7 @@ class ELB(AWSResource):
 @resource("aws::VirtualMachine", agent="provider.name", id_attribute="name")
 class VirtualMachine(AWSResource):
     fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check", "tags",
-              "subnet", "security_groups", "volumes", "volume_attachment", "ebs_optimized", "ignore_extra_volumes", "ignore_wrong_image")
+              "subnet", "security_groups", "volumes", "volume_attachment", "ebs_optimized", "ignore_extra_volumes", "ignore_wrong_image", "root_volume_size", "root_volume_type")
 
     @staticmethod
     def get_key_name(_, resource):
@@ -550,6 +550,17 @@ class VirtualMachineHandler(AWSHandler):
 
         root = instance.root_device_name
 
+        resource.root_device_name = root
+        
+
+        root_volumes = [volume for volume in instance.volumes.all()if volume.attachments[0]["Device"] == root]
+        if len(root_volumes)==1:
+            resource.root_volume_size = root_volumes[0].size
+            ctx.set("root_volume", root_volumes[0])
+        else:
+            resource.root_volume_size = 0
+
+
         resource.volumes = [x for x in [self.get_name_from_tag(volume.tags)
                                         for volume in instance.volumes.all()
                                         if volume.attachments[0]["Device"] != root] if x is not None]
@@ -656,6 +667,18 @@ class VirtualMachineHandler(AWSHandler):
         if "image" in changes and resource.ignore_wrong_image:
             todo -= 1
 
+        if "root_volume_size"in changes:
+            current = changes["root_volume_size"]["current"]
+            desired = changes["root_volume_size"]["desired"]
+
+            if desired < current:
+                 ctx.warning("Can not reduce root volume size form %(current)d to %(desired)d", current=current, desired=desired)
+            else:
+                rv = ctx.get("root_volume")
+                self._session.client("ec2").modify_volume(VolumeId=rv.volume_id, Size=desired)
+                todo -= 1
+
+
         if todo > 0:
             ctx.warning("attempting to modify running instance, diff %(diff)s", diff=changes)
             raise SkipResource("Modifying a running instance is not supported.")
@@ -707,6 +730,8 @@ class VirtualMachineHandler(AWSHandler):
         facts["mac_address"] = iface["MacAddress"]
         facts["ip_address"] = iface["PrivateIpAddress"]
         facts["public_ip"] = instance.public_ip_address
+
+        facts["root_device_name"] = instance.root_device_name
 
         data = instance.password_data()
         if "PasswordData" in data:
