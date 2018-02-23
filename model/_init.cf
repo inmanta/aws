@@ -1,5 +1,5 @@
 """
-    Copyright 2017 Inmanta
+    Copyright 2018 Inmanta
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -122,6 +122,7 @@ entity Host extends VMAttributes, ip::Host:
     """
         A subclass of ip::Host that creates a virtual machine on AWS.
     """
+    bool install_agent=false
 end
 
 Host.vm [1] -- VirtualMachine
@@ -150,6 +151,7 @@ implementation awsHost for Host:
 end
 
 implement Host using std::hostDefaults, awsHost
+implement Host using userData when install_agent
 
 entity Volume extends AWSResource:
     string name
@@ -233,6 +235,22 @@ index InternetGateway(provider, name)
 VPC.internet_gateway [0:1] -- InternetGateway.vpc [0:1]
 
 implement InternetGateway using std::none
+
+# Route entry
+entity Route extends AWSResource:
+    """
+        A route entry in the main VPC routing table
+
+        :attr destination: The destination route
+        :attr nexthop: The private ip associated with a ENI in the VPC.
+    """
+    ip::cidr destination
+    ip::ip nexthop
+end
+
+VPC.routes [0:] -- Route.vpc [1]
+
+implement Route using std::none
 
 # Security group config
 typedef direction as string matching self == "ingress" or self == "egress"

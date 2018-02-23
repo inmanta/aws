@@ -1,0 +1,47 @@
+import aws
+import ip
+import redhat
+import redhat::epel
+import ssh
+
+provider = aws::Provider(name="aws", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
+                         secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
+key = ssh::Key(name="id_rsa_inmanta", public_key=std::source("/id_rsa.pub"))
+
+windows_2012_ami="ami-1e5d4378"
+windows_flavor="t2.micro"
+
+name = "vpc-x"
+
+# create a new VPC
+vpc = aws::VPC(name=name, provider=provider, cidr_block="192.168.42.0/24", instance_tenancy="default")
+
+# associate an internet gateway with the vpc
+gw = aws::InternetGateway(name=name, provider=provider, vpc=vpc, requires=vpc)
+
+# create a new subnet
+subnet = aws::Subnet(name=name, provider=provider, cidr_block="192.168.42.0/26", vpc=vpc,
+                     map_public_ip_on_launch=true, requires=gw)
+
+# create a new security group
+sg_base = aws::SecurityGroup(name="base_{{name}}", description="Base security group for {{name}}", vpc=vpc, provider=provider)
+aws::IPrule(group=sg_base, direction="egress", ip_protocol="all", remote_prefix="0.0.0.0/0")
+aws::IPrule(group=sg_base, direction="ingress", ip_protocol="icmp", remote_prefix="0.0.0.0/0")
+# Enable windows remoting from central mgmt server
+aws::IPrule(group=sg_base, direction="ingress", ip_protocol="tcp", port=5986, remote_prefix="1.2.3.4/32")
+# Allow RDP
+aws::IPrule(group=sg_base, direction="ingress", ip_protocol="tcp", port=3389, remote_prefix="1.2.3.4/32")
+
+# Boot a windows VM (not a subclass of ip::Host)
+vm = aws::VirtualMachine(provider=provider, flavor=windows_flavor, image=windows_2012_ami, public_key=key,
+                         subnet=subnet, name=name, requires=[subnet, sg_base],
+                         user_data="some powershell script ...", security_groups=sg_base)
+vm_public_ip = std::getfact(vm, "public_ip")
+
+# Get the ssh key encrypted windows PW
+pw = aws::decrypt(std::source("/inmanta.pem"), std::getfact(vm, "password_data"))
+
+# Linux VM
+linux_host = aws::Host(provider=provider, flavor="t2.nano", image="ami-0d063c6b", public_key=key,
+                       subnet=subnet, name="server", requires=[subnet, base_sg],
+                       install_agent=true, security_groups=mgmt_sg, os=redhat::centos7)
