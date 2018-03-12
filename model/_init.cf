@@ -95,6 +95,8 @@ implementation req for VirtualMachine:
     for volume in volumes:
         self.requires = volume
     end
+    self.requires = self.subnet
+    self.requires = self.security_groups
 end
 
 VirtualMachine.public_key [1] -- ssh::Key

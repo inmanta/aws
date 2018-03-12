@@ -996,7 +996,17 @@ class VPCHandler(AWSHandler):
 
     def create_resource(self, ctx: HandlerContext, resource: VPC) -> None:
         vpc = self._ec2.create_vpc(CidrBlock=resource.cidr_block, InstanceTenancy=resource.instance_tenancy)
-        vpc.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+
+        # This method tends to hit eventual consistency problem returning an error that the subnet does not exist
+        tries = 5
+        while tries > 0:
+            try:
+                time.sleep(1)
+                vpc.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+            except botocore.exceptions.ClientError:
+                pass
+            tries -= 1
+
         ctx.info("Create new vpc with id %(id)s", id=vpc.id)
         ctx.set_created()
 
