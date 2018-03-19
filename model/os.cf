@@ -18,3 +18,5 @@
 import redhat
 
 amazonlinux = std::OS(name="amazon", family=redhat::redhat)
+awsl1 = std::OS(name="amazon", family=amazonlinux, version=1)
+awsl2 = std::OS(name="amazon", family=amazonlinux, version=2)
