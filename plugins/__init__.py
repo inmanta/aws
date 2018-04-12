@@ -1278,8 +1278,8 @@ class RoutingTableHandler(AWSHandler):
             if len(added) > 0:
                 self.associate(ctx, ctx.get("route_table"), list(added))
 
-            if len(removed) > 0 and not resource.manage_all:
-                raise SkipResource("Disassociating routing tables is not supported")
+#             if len(removed) > 0 and not resource.manage_all:
+#                 raise SkipResource("Disassociating routing tables is not supported")
         else:
             raise SkipResource("RoutingTable can not be updated, not supported")
 
