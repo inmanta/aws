@@ -33,6 +33,7 @@ from inmanta.ast import OptionalValueException
 from inmanta.plugins import plugin
 from inmanta.resources import resource, PurgeableResource, ManagedResource
 from inmanta.execute.util import Unknown
+import string
 
 LOGGER = logging.getLogger(__name__)
 
@@ -229,21 +230,6 @@ class Volume(AWSResource):
 @resource("aws::analytics::ElasticSearch", agent="provider.name", id_attribute="domain_name")
 class ElasticSearch(AWSResource):
     fields = ("domain_name", "elasticsearch_version", "instance_type", "instance_count", "dedicated_master_enabled",
-              "zone_awareness_enabled", "dedicated_master_type", "dedicated_master_count", "ebs_enabled", "volume_type",
-              "volume_size", "access_policies", "automated_snapshot_start_hour")
-
-    @staticmethod
-    def get_access_policies(_, resource):
-        try:
-            return json.dumps(json.loads(resource.access_policies), sort_keys=True)
-        except:
-            print(resource.access_policies)
-            raise
-
-
-@resource("aws::analytics::ElasticSearch", agent="provider.name", id_attribute="domain_name")
-class ElasticSearch(AWSResource):
-    fields = ("domain_name", "elasticsearch_version", "instance_type", "instance_count", "dedicated_master_enabled",
               "zone_awareness_enabled", "dedicated_master_type", "dedicated_master_count", "ebs_enabled",
               "volume_type", "volume_size", "access_policies", "automated_snapshot_start_hour")
 
@@ -275,6 +261,15 @@ class InternetGateway(AWSResource):
         return resource.vpc.name
 
 
+@resource("aws::NatGateway", agent="provider.name", id_attribute="name")
+class NatGateway(AWSResource):
+    fields = ("name", "subnet")
+
+    @staticmethod
+    def get_subnet(_, resource):
+        return resource.subnet.name
+
+
 @resource("aws::Route", agent="provider.name", id_attribute="destination")
 class Route(AWSResource):
     fields = ("destination", "nexthop", "vpc")
@@ -282,6 +277,57 @@ class Route(AWSResource):
     @staticmethod
     def get_vpc(_, resource):
         return resource.vpc.name
+
+
+@resource("aws::NatRoute", agent="provider.name", id_attribute="theid")
+class NatRoute(AWSResource):
+    fields = ("gateway", "destination", "vpc", "routingtable")
+
+    @staticmethod
+    def get_vpc(_, resource):
+        return resource.routingtable.vpc.name
+
+    @staticmethod
+    def get_theid(_, resource):
+        return resource.routingtable.vpc.name + resource.routingtable.name + resource.destination
+
+    @staticmethod
+    def get_gateway(_, resource):
+        return resource.gateway.name
+
+    @staticmethod
+    def get_routingtable(_, resource):
+        return resource.routingtable.name
+
+
+@resource("aws::PeeringRoute", agent="provider.name", id_attribute="theid")
+class PeeringRoute(AWSResource):
+    fields = ("peering_id", "destination", "vpc", "routingtable")
+
+    @staticmethod
+    def get_vpc(_, resource):
+        return resource.routingtable.vpc.name
+
+    @staticmethod
+    def get_theid(_, resource):
+        return resource.routingtable.vpc.name + resource.routingtable.name + resource.destination
+
+    @staticmethod
+    def get_routingtable(_, resource):
+        return resource.routingtable.name
+
+
+@resource("aws::RoutingTable", agent="provider.name", id_attribute="name")
+class RoutingTable(AWSResource):
+    fields = ("name", "main", "vpc", "associations", "manage_all")
+
+    @staticmethod
+    def get_vpc(_, resource):
+        return resource.vpc.name
+
+    @staticmethod
+    def get_associations(_, resource):
+        return sorted([a.name for a in resource.associations])
 
 
 @resource("aws::SecurityGroup", agent="provider.name", id_attribute="name")
@@ -337,12 +383,6 @@ class RDS(AWSResource):
               "port", "public", "subnet_group", "tags")
 
 
-@resource("aws::database::RDS", agent="provider.name", id_attribute="name")
-class RDS(AWSResource):
-    fields = ("name", "allocated_storage", "flavor", "engine", "engine_version", "master_user_name",
-              "master_user_password", "port", "public", "subnet_group", "tags")
-
-
 class AWSHandler(CRUDHandler):
     def __init__(self, agent, io=None) -> None:
         CRUDHandler.__init__(self, agent, io=io)
@@ -380,12 +420,76 @@ class AWSHandler(CRUDHandler):
             return alltags["Name"]
         return None
 
+    def get_name_from_id(self, ctx, id):
+        all = self._session.client('ec2').describe_tags(Filters=[{"Name": "resource-id", "Values": [id]}])["Tags"]
+        ctx.debug("Found tags: %(tags)s", tags=all)
+        if len(all) != 1:
+            return None
+        return self.get_name_from_tag(all)
+
+    def _get_subnet_by_name(self, ctx, name):
+        subnets = list(self._ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
+        if len(subnets) == 0:
+            ctx.info("No subnet found with tag Name %(name)s", name=name)
+            raise SkipResource()
+
+        elif len(subnets) > 1:
+            ctx.info("Found more than one subnet with tag Name %(name)s", name=name, subnets=subnets)
+            raise SkipResource()
+
+        subnet = subnets[0]
+        return subnet
+
+    def _get_subnet(self, subnet_id):
+        subnets = list(self._ec2.subnets.filter(SubnetIds=[subnet_id]))
+        if len(subnets) == 0:
+            return None
+        return subnets[0]
+
+    def _get_eip_by_name(self, name):
+        subnets = list(self._ec2.vpc_addresses.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
+        if len(subnets) == 0:
+            return None
+        return subnets[0]
+
+    def _get_vpc(self, name):
+        return list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
+
+    def _get_routingtable(self, ctx, vpcname, name):
+        vpcs = self._get_vpc(vpcname)
+        if len(vpcs) == 0:
+            ctx.info("Unable to find vpcs with tag Name %(name)s", name=vpcname, instances=vpcs)
+            raise SkipResource()
+
+        elif len(vpcs) > 1:
+            ctx.info("Found more than one vpcs with tag Name %(name)s", name=vpcname, instances=vpcs)
+            raise SkipResource()
+
+        vpc = vpcs[0]
+        ctx.set("vpc", vpc)
+
+        # Find the route entry in the main routing table of the VPC
+        route_tables = list(vpc.route_tables.all())
+
+        rts = [r for r in route_tables if self.get_name_from_tag(r.tags) == name]
+        if len(rts) > 1:
+            ctx.info("Found more than one routing table with name %(name)s", name=name)
+            raise SkipResource()
+        elif len(rts) == 0:
+            raise ResourcePurged()
+        else:
+            route_table = rts[0]
+
+        ctx.set("route_table", route_table)
+        return route_table
+
 
 @provider("aws::ELB", name="ec2")
 class ELBHandler(AWSHandler):
     """
         This class manages ELB instances on amazon ec2
     """
+
     def _get_name(self, vm):
         tags = vm.tags if vm.tags is not None else []
         for tag in tags:
@@ -511,24 +615,6 @@ class ELBHandler(AWSHandler):
 
 @provider("aws::VirtualMachine", name="ec2")
 class VirtualMachineHandler(AWSHandler):
-    def _get_subnet(self, subnet_id):
-        subnets = list(self._ec2.subnets.filter(SubnetIds=[subnet_id]))
-        if len(subnets) == 0:
-            return None
-        return subnets[0]
-
-    def _get_subnet_by_name(self, ctx, name):
-        subnets = list(self._ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
-        if len(subnets) == 0:
-            ctx.info("No subnet found with tag Name %(name)s", name=name)
-            raise SkipResource()
-
-        elif len(subnets) > 1:
-            ctx.info("Found more than one subnet with tag Name %(name)s", name=name, subnets=subnets)
-            raise SkipResource()
-
-        subnet = subnets[0]
-        return subnet
 
     def read_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         key_pairs = list(self._ec2.key_pairs.filter(Filters=[{"Name": "key-name", "Values": [resource.key_name]}]))
@@ -560,15 +646,13 @@ class VirtualMachineHandler(AWSHandler):
         root = instance.root_device_name
 
         resource.root_device_name = root
-        
 
         root_volumes = [volume for volume in instance.volumes.all()if volume.attachments[0]["Device"] == root]
-        if len(root_volumes)==1:
+        if len(root_volumes) == 1:
             resource.root_volume_size = root_volumes[0].size
             ctx.set("root_volume", root_volumes[0])
         else:
             resource.root_volume_size = 0
-
 
         resource.volumes = [x for x in [self.get_name_from_tag(volume.tags)
                                         for volume in instance.volumes.all()
@@ -623,7 +707,7 @@ class VirtualMachineHandler(AWSHandler):
         callargs = {}
         if len(resource.security_groups) > 0:
             sgs = list(self._ec2.security_groups.filter(Filters=[{"Name": "group-name", "Values": resource.security_groups},
-                                                        {"Name": "vpc-id", "Values": [vpc_id]}]))
+                                                                 {"Name": "vpc-id", "Values": [vpc_id]}]))
             if len(sgs) != len(resource.security_groups):
                 ctx.warning("Unable to find the correct number of security groups. Found: %(groups)s",
                             groups=[x.group_name for x in sgs])
@@ -668,11 +752,11 @@ class VirtualMachineHandler(AWSHandler):
         if "tags" in changes:
             current = changes["tags"]["current"]
             desired = changes["tags"]["desired"]
-            tochange = {k:v for k,v in desired.items() if k not in current or current[k] != v}
-            ctx.info("changing tags %(tags)s",tags=tochange)
+            tochange = {k: v for k, v in desired.items() if k not in current or current[k] != v}
+            ctx.info("changing tags %(tags)s", tags=tochange)
             instance.create_tags(Tags=self.tags_internal_to_amazon(tochange))
             todo -= 1
-        
+
         if "image" in changes and resource.ignore_wrong_image:
             todo -= 1
 
@@ -681,12 +765,11 @@ class VirtualMachineHandler(AWSHandler):
             desired = changes["root_volume_size"]["desired"]
 
             if desired < current:
-                 ctx.warning("Can not reduce root volume size form %(current)d to %(desired)d", current=current, desired=desired)
+                ctx.warning("Can not reduce root volume size form %(current)d to %(desired)d", current=current, desired=desired)
             else:
                 rv = ctx.get("root_volume")
                 self._session.client("ec2").modify_volume(VolumeId=rv.volume_id, Size=desired)
                 todo -= 1
-
 
         if todo > 0:
             ctx.warning("attempting to modify running instance, diff %(diff)s", diff=changes)
@@ -844,7 +927,7 @@ class ElasticSearchHandler(AWSHandler):
 
     def convert_resource(self, resource, update=True):
         ElasticsearchClusterConfig = {
-            "InstanceType":resource.instance_type,
+            "InstanceType": resource.instance_type,
             "InstanceCount": resource.instance_count,
             "DedicatedMasterEnabled":  resource.dedicated_master_enabled,
             "ZoneAwarenessEnabled":  resource.zone_awareness_enabled,
@@ -855,17 +938,17 @@ class ElasticSearchHandler(AWSHandler):
             ElasticsearchClusterConfig["DedicatedMasterCount"] = resource.dedicated_master_count
 
         out = {
-            "DomainName" : resource.domain_name,
-            "ElasticsearchVersion" : resource.elasticsearch_version,
-            "ElasticsearchClusterConfig" : ElasticsearchClusterConfig,
-            "EBSOptions" : {
-                "EBSEnabled" : resource.ebs_enabled,
-                "VolumeType" : resource.volume_type,
-                "VolumeSize" : resource.volume_size
+            "DomainName": resource.domain_name,
+            "ElasticsearchVersion": resource.elasticsearch_version,
+            "ElasticsearchClusterConfig": ElasticsearchClusterConfig,
+            "EBSOptions": {
+                "EBSEnabled": resource.ebs_enabled,
+                "VolumeType": resource.volume_type,
+                "VolumeSize": resource.volume_size
             },
-            "AccessPolicies" : resource.access_policies,
-            "SnapshotOptions" : {
-                "AutomatedSnapshotStartHour" : resource.automated_snapshot_start_hour
+            "AccessPolicies": resource.access_policies,
+            "SnapshotOptions": {
+                "AutomatedSnapshotStartHour": resource.automated_snapshot_start_hour
             }
         }
 
@@ -875,30 +958,28 @@ class ElasticSearchHandler(AWSHandler):
 
     def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         ElasticsearchClusterConfig = {
-                "InstanceType":resource.instance_type,
-                "InstanceCount": resource.instance_count,
-                "DedicatedMasterEnabled" :  resource.dedicated_master_enabled,
-                "ZoneAwarenessEnabled" :  resource.zone_awareness_enabled,
-            }
+            "InstanceType": resource.instance_type,
+            "InstanceCount": resource.instance_count,
+            "DedicatedMasterEnabled":  resource.dedicated_master_enabled,
+            "ZoneAwarenessEnabled":  resource.zone_awareness_enabled,
+        }
 
         if resource.dedicated_master_enabled:
             ElasticsearchClusterConfig["DedicatedMasterType"] = resource.dedicated_master_type
             ElasticsearchClusterConfig["DedicatedMasterCount"] = resource.dedicated_master_count
 
-
-
         self._es.create_elasticsearch_domain(
-            DomainName = resource.domain_name,
-            ElasticsearchVersion = resource.elasticsearch_version,
-            ElasticsearchClusterConfig = ElasticsearchClusterConfig,
-            EBSOptions = {
-                "EBSEnabled" : resource.ebs_enabled,
-                "VolumeType" : resource.volume_type,
-                "VolumeSize" : resource.volume_size
+            DomainName=resource.domain_name,
+            ElasticsearchVersion=resource.elasticsearch_version,
+            ElasticsearchClusterConfig=ElasticsearchClusterConfig,
+            EBSOptions={
+                "EBSEnabled": resource.ebs_enabled,
+                "VolumeType": resource.volume_type,
+                "VolumeSize": resource.volume_size
             },
-            AccessPolicies = resource.access_policies,
-            SnapshotOptions = {
-                "AutomatedSnapshotStartHour" : resource.automated_snapshot_start_hour
+            AccessPolicies=resource.access_policies,
+            SnapshotOptions={
+                "AutomatedSnapshotStartHour": resource.automated_snapshot_start_hour
             }
         )
         ctx.info("Create new Elastic Search")
@@ -966,17 +1047,17 @@ class RDSHandler(AWSHandler):
     def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         db = self._rds.create_db_instance(
             DBInstanceIdentifier=resource.name,
-            AllocatedStorage = resource.allocated_storage,
-            DBInstanceClass = resource.flavor,
-            Engine = resource.engine,
-            MasterUsername = resource.master_user_name,
-            MasterUserPassword = resource.master_user_password,
-            DBSubnetGroupName = resource.subnet_group,
-            Port = resource.port,
-            EngineVersion = resource.engine_version,
-            PubliclyAccessible = resource.public,
-            Tags = self.tags_internal_to_amazon(resource.tags)
-            )
+            AllocatedStorage=resource.allocated_storage,
+            DBInstanceClass=resource.flavor,
+            Engine=resource.engine,
+            MasterUsername=resource.master_user_name,
+            MasterUserPassword=resource.master_user_password,
+            DBSubnetGroupName=resource.subnet_group,
+            Port=resource.port,
+            EngineVersion=resource.engine_version,
+            PubliclyAccessible=resource.public,
+            Tags=self.tags_internal_to_amazon(resource.tags)
+        )
         ctx.info("Create new db with id %(id)s", id=db["DBInstance"]["DBInstanceIdentifier"])
         ctx.set_created()
 
@@ -1125,6 +1206,192 @@ class RouteHandler(AWSHandler):
         ctx.set_purged()
 
 
+@provider("aws::RoutingTable", name="ec2")
+class RoutingTableHandler(AWSHandler):
+
+    def read_resource(self, ctx: HandlerContext, resource: NatRoute) -> None:
+        vpcs = self._get_vpc(resource.vpc)
+        if len(vpcs) == 0:
+            ctx.info("Unable to find vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
+            raise SkipResource()
+
+        elif len(vpcs) > 1:
+            ctx.info("Found more than one vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
+            raise SkipResource()
+
+        vpc = vpcs[0]
+        ctx.set("vpc", vpc)
+
+        # Find the route entry in the main routing table of the VPC
+        route_tables = list(vpc.route_tables.all())
+
+        def ismain(association):
+            return "SubnetId" not in association and association["Main"]
+
+        if resource.main:
+            mains = [r for r in route_tables if any((ismain(x) for x in r.associations_attribute))]
+            if len(mains) > 1:
+                ctx.info("Found more than one main routing table")
+                raise SkipResource()
+            elif len(mains) == 0:
+                raise ResourcePurged()
+            else:
+                route_table = mains[0]
+                resource.name = self.get_name_from_tag(route_table.tags)
+        else:
+            rts = [r for r in route_tables if self.get_name_from_tag(r.tags) == resource.name]
+            if len(rts) > 1:
+                ctx.info("Found more than one routing table with name %(name)s", name=resource.name)
+                raise SkipResource()
+            elif len(rts) == 0:
+                raise ResourcePurged()
+            else:
+                route_table = rts[0]
+
+        ctx.set("route_table", route_table)
+
+        subnets = [x.subnet for x in route_table.associations]
+        subnet_names = sorted([self.get_name_from_tag(x.tags) for x in subnets])
+        resource.associations = subnet_names
+#         resource.purged = False
+
+    def associate(self, ctx, route_table, subnetnames):
+        subnetids = [x.subnet_id for x in route_table.associations]
+        for subnetname in subnetnames:
+            subnet = self._get_subnet_by_name(ctx, subnetname)
+            id = subnet.subnet_id
+            if id not in subnetids:
+                route_table.associate_with_subnet(SubnetId=id)
+
+    def create_resource(self, ctx: HandlerContext, resource: Route) -> None:
+        route_table = self._ec2.create_route_table(VpcId=ctx.get("vpc").vpc_id)
+        route_table.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+        self.associate(ctx, route_table, resource.associations)
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: Route) -> None:
+        if "associations" in changes:
+            current = set(changes["associations"]["current"])
+            desired = set(changes["associations"]["desired"])
+            added = desired - current
+            removed = current - desired
+
+            if len(added) > 0:
+                self.associate(ctx, ctx.get("route_table"), list(added))
+
+            if len(removed) > 0 and not resource.manange_all:
+                raise SkipResource("Disassociating routing tables is not supported")
+        else:
+            raise SkipResource("RoutingTable can not be updated, not supported")
+
+    def delete_resource(self, ctx: HandlerContext, resource: Route) -> None:
+        raise SkipResource("RoutingTable gateway can not be deleted, not supported")
+
+
+@provider("aws::NatRoute", name="ec2")
+class NatRouteHandler(AWSHandler):
+
+    def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
+        super().pre(ctx, resource)
+        self._ec2_raw = self._session.client('ec2')
+
+    def get_ngw(self, ctx: HandlerContext, name: string) -> None:
+        nats = self._ec2_raw.describe_nat_gateways(Filters=[{"Name": "tag:Name", "Values": [name]}])
+        nats = nats["NatGateways"]
+        if len(nats) == 0:
+            raise ResourcePurged()
+
+        elif len(nats) > 1:
+            ctx.info("Found more than one Nat gateway with tag Name %(name)s", name=name, instances=nats)
+            raise SkipResource()
+
+        nat = nats[0]
+        ctx.set("nat", nat)
+        return nat["NatGatewayId"]
+
+    def read_resource(self, ctx: HandlerContext, resource: NatRoute) -> None:
+        route_table = self._get_routingtable(ctx, resource.vpc, resource.routingtable)
+
+        route = None
+        for rt in route_table.routes:
+            if rt.destination_cidr_block == resource.destination:
+                route = rt
+                break
+
+        if route is None:
+            raise ResourcePurged()
+
+        ctx.set("route", route)
+
+        ngwid = route.nat_gateway_id
+        ctx.debug("got nat gw id %(id)s", id=ngwid)
+        if ngwid is None:
+            resource.gateway = "<<%s>>" % ngwid
+        else:
+            name = self.get_name_from_id(ctx, ngwid)
+            ctx.debug("got nat gw name %(name)s", name=name)
+            resource.gateway = name
+
+    def create_resource(self, ctx: HandlerContext, resource: Route) -> None:
+        route_table = ctx.get("route_table")
+        ngw = self.get_ngw(ctx, resource.gateway)
+        route_table.create_route(DestinationCidrBlock=resource.destination, NatGatewayId=ngw)
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: Route) -> None:
+        raise SkipResource("RoutingTable can not be updated, not supported")
+        rt = ctx.get("route")
+        rt.delete()
+        route_table = ctx.get("route_table")
+        eni = ctx.get("eni")
+        route_table.create_route(DestinationCidrBlock=resource.destination, NetworkInterfaceId=eni.id)
+        ctx.set_updated()
+
+    def delete_resource(self, ctx: HandlerContext, resource: Route) -> None:
+        raise SkipResource("RoutingTable can not be updated, not supported")
+        rt = ctx.get("route")
+        rt.delete()
+        ctx.set_purged()
+
+
+@provider("aws::PeeringRoute", name="ec2")
+class PeeringRouteHandler(AWSHandler):
+
+    def read_resource(self, ctx: HandlerContext, resource: NatRoute) -> None:
+        route_table = self._get_routingtable(ctx, resource.vpc, resource.routingtable)
+
+        route = None
+        for rt in route_table.routes:
+            if rt.destination_cidr_block == resource.destination:
+                route = rt
+                break
+
+        if route is None:
+            raise ResourcePurged()
+
+        ctx.set("route", route)
+        resource.peering_id = route.vpc_peering_connection_id
+
+    def create_resource(self, ctx: HandlerContext, resource: Route) -> None:
+        route_table = ctx.get("route_table")
+        route_table.create_route(DestinationCidrBlock=resource.destination, VpcPeeringConnectionId=resource.peering_id)
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: Route) -> None:
+        raise SkipResource("RoutingTable can not be updated, not supported")
+        rt = ctx.get("route")
+        rt.delete()
+        route_table = ctx.get("route_table")
+        eni = ctx.get("eni")
+        route_table.create_route(DestinationCidrBlock=resource.destination, NetworkInterfaceId=eni.id)
+        ctx.set_updated()
+
+    def delete_resource(self, ctx: HandlerContext, resource: Route) -> None:
+        raise SkipResource("RoutingTable can not be updated, not supported")
+        rt = ctx.get("route")
+        rt.delete()
+        ctx.set_purged()
+
+
 @provider("aws::Subnet", name="ec2")
 class SubnetHandler(AWSHandler):
     def read_resource(self, ctx: HandlerContext, resource: Subnet) -> None:
@@ -1268,6 +1535,59 @@ class InternetGatewayHandler(AWSHandler):
         ctx.set_purged()
 
 
+@provider("aws::NatGateway", name="ec2")
+class NatGatewayHandler(AWSHandler):
+
+    def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
+        super(NatGatewayHandler, self).pre(ctx, resource)
+        self._ec2_raw = self._session.client('ec2')
+
+    def read_resource(self, ctx: HandlerContext, resource: NatGateway) -> None:
+        nats = self._ec2_raw.describe_nat_gateways(Filters=[{"Name": "tag:Name", "Values": [resource.name]}])
+        nats = nats["NatGateways"]
+        if len(nats) == 0:
+            raise ResourcePurged()
+
+        elif len(nats) > 1:
+            ctx.info("Found more than one Nat gateway with tag Name %(name)s", name=resource.name, instances=nats)
+            raise SkipResource()
+
+        nat = nats[0]
+        ctx.set("nat", nat)
+        resource.purged = False
+
+        snid = nat["SubnetId"]
+        sn = self._get_subnet(snid)
+        if sn is None:
+            resource.subnet = None
+        else:
+            snname = self.get_name_from_tag(sn.tags)
+            if snname is None:
+                resource.subnet = "<<%s>>" % snid
+            else:
+                resource.subnet = snname
+
+    def create_resource(self, ctx: HandlerContext, resource: InternetGateway) -> None:
+        subnet = self._get_subnet_by_name(ctx, resource.subnet)
+
+        eip = self._ec2_raw.allocate_address(Domain="vpc")
+        eip = eip["AllocationId"]
+        self._ec2_raw.create_tags(Resources=[eip], Tags=[{"Key": "Name", "Value": "NAT: " + resource.name}])
+
+        nat = self._ec2_raw.create_nat_gateway(AllocationId=eip, SubnetId=subnet.subnet_id, ClientToken="NAT: " + resource.name)
+        natid = nat["NatGateway"]["NatGatewayId"]
+        self._ec2_raw.create_tags(Resources=[natid], Tags=[{"Key": "Name", "Value": resource.name}])
+        ctx.info("Created new nat gateway with id %(id)s", id=natid)
+
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: InternetGateway) -> None:
+        raise SkipResource("Nat gateway can not be updated")
+
+    def delete_resource(self, ctx: HandlerContext, resource: InternetGateway) -> None:
+        raise SkipResource("Nat gateway can not be deleted")
+
+
 @provider("aws::SecurityGroup", name="ec2")
 class SecurityGroupHandler(AWSHandler):
     def _compare_rule(self, old, new):
@@ -1299,6 +1619,8 @@ class SecurityGroupHandler(AWSHandler):
 
             if len(old_rules) == 0 and len(new_rules) == 0:
                 del changes["rules"]
+            else:
+                changes["effective"] = {"current": old_rules, "desired": new_rules}
 
         return changes
 
@@ -1358,7 +1680,7 @@ class SecurityGroupHandler(AWSHandler):
         ctx.set("vpc", vpc)
 
         sgs = list(vpc.security_groups.filter(Filters=[{"Name": "group-name", "Values": [resource.name]},
-                                              {"Name": "vpc-id", "Values": [vpc.id]}]))
+                                                       {"Name": "vpc-id", "Values": [vpc.id]}]))
         if len(sgs) == 0:
             raise ResourcePurged()
 
@@ -1390,7 +1712,7 @@ class SecurityGroupHandler(AWSHandler):
 
         return vpcs[0]
 
-    def _build_rule_arg(self, add_rule):
+    def _build_rule_arg(self, ctx, add_rule):
         proto = add_rule["protocol"]
         rule = {"FromPort": add_rule["port_range_min"], "ToPort": add_rule["port_range_max"],
                 "IpProtocol": proto if proto != "all" else "-1"}
@@ -1398,8 +1720,7 @@ class SecurityGroupHandler(AWSHandler):
             rule["IpRanges"] = [{"CidrIp": add_rule["remote_ip_prefix"]}]
 
         elif "remote_group" in add_rule:
-            raise Exception("Todo!!")
-
+            rule["UserIdGroupPairs"] = [{"GroupName": add_rule["remote_group"]}]
         return rule
 
     def _update_rules(self, ctx, group, resource, current_rules, desired_rules):
@@ -1417,14 +1738,14 @@ class SecurityGroupHandler(AWSHandler):
                     break
 
         for add_rule in add_rules:
-            rule = self._build_rule_arg(add_rule)
+            rule = self._build_rule_arg(ctx, add_rule)
             if add_rule["direction"] == "ingress":
                 group.authorize_ingress(IpPermissions=[rule])
             else:
                 group.authorize_egress(IpPermissions=[rule])
 
         for remove_rule in remove_rules:
-            rule = self._build_rule_arg(remove_rule)
+            rule = self._build_rule_arg(ctx, remove_rule)
             if remove_rule["direction"] == "ingress":
                 group.revoke_ingress(IpPermissions=[rule])
             else:

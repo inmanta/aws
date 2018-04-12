@@ -238,6 +238,83 @@ VPC.internet_gateway [0:1] -- InternetGateway.vpc [0:1]
 
 implement InternetGateway using std::none
 
+entity NatGateway extends AWSResource:
+    """
+        An Nat gateway for use with a VPC.
+
+    """
+    string name
+end
+
+index InternetGateway(provider, name)
+
+Subnet.nat_gateway [0:] -- NatGateway.subnet [1]
+
+implement NatGateway using std::none
+
+
+
+
+entity RoutingTable extends AWSResource:
+    """ AWS routing table """
+    string name
+    bool main = false
+    bool manage_all = true
+end
+
+RoutingTable.vpc [1] -- VPC.routingtables [0:]
+RoutingTable.associations [0:] -- Subnet.routingtable [0:1]
+
+implementation rt for RoutingTable:
+    self.requires = self.vpc
+    self.provider = self.vpc.provider
+    self.requires = self.associations
+end
+
+implement RoutingTable using rt
+
+entity RouteTableLine extends AWSResource:
+    """ Route in the routing table """
+    ip::cidr destination
+end
+
+RouteTableLine.routingtable [1] -- RoutingTable.routes [0:]
+
+index RouteTableLine(routingtable,destination)
+
+implementation rtl for RouteTableLine:
+    self.requires = self.routingtable
+    self.provider = self.routingtable.provider
+end
+
+implement RouteTableLine using rtl
+
+entity IPRoute extends RouteTableLine:
+    ip::ip nexthop
+end
+
+implement IPRoute using parents
+
+entity NatRoute extends RouteTableLine:
+end
+
+implementation nr for NatRoute:
+    self.requires = self.gateway
+end
+
+implement NatRoute using parents
+implement NatRoute using nr
+
+
+NatRoute.gateway [1] -- NatGateway
+
+entity PeeringRoute extends RouteTableLine:
+    string peering_id
+end
+
+implement PeeringRoute using parents
+
+
 # Route entry
 entity Route extends AWSResource:
     """
