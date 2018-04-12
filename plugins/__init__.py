@@ -1278,8 +1278,8 @@ class RoutingTableHandler(AWSHandler):
             if len(added) > 0:
                 self.associate(ctx, ctx.get("route_table"), list(added))
 
-#             if len(removed) > 0 and not resource.manage_all:
-#                 raise SkipResource("Disassociating routing tables is not supported")
+            if len(removed) > 0 and resource.manage_all:
+                raise SkipResource("Disassociating routing tables is not supported")
         else:
             raise SkipResource("RoutingTable can not be updated, not supported")
 
@@ -1635,24 +1635,25 @@ class SecurityGroupHandler(AWSHandler):
         current_rule["port_range_min"] = rule.get("FromPort", -1)
         current_rule["port_range_max"] = rule.get("ToPort", -1)
 
+        ctx.info("found rule", rule=rule, direction=direction)
+
         rules = []
-        if rule["IpRanges"] is not None:
+        if "IpRanges" in rule and rule["IpRanges"] is not None and len(rule["IpRanges"]) > 0:
             for ip_range in rule["IpRanges"]:
                 r = current_rule.copy()
                 r["remote_ip_prefix"] = ip_range["CidrIp"]
                 rules.append(r)
 
-        elif rule["UserIdGroupPairs"] is not None:
+        elif "UserIdGroupPairs" in rule and rule["UserIdGroupPairs"] is not None and len(rule["UserIdGroupPairs"]) > 0:
             if len(rule["UserIdGroupPairs"]) > 1:
                 ctx.warning("More than one security group source per rule is not support, only using the first group",
                             groups=rule["UserIdGroupPairs"])
 
-            rgi = self._get_security_group(ctx, group_id=rule["UserIdGroupPairs"][0]["GroupId"])
-            current_rule["remote_group"] = rgi.name
-            rules.append(r)
+            rgi = self._get_security_group(ctx, ctx.get("vpc"), group_id=rule["UserIdGroupPairs"][0]["GroupId"])
+            current_rule["remote_group"] = rgi.group_name
+            rules.append(current_rule)
         else:
             ctx.error("No idea what to do with this rule", rule=rule, direction=direction)
-
         return rules
 
     def _build_current_rules(self, ctx, security_group):
@@ -1666,6 +1667,12 @@ class SecurityGroupHandler(AWSHandler):
             rules.extend(current_rule)
 
         return rules
+
+    def _get_security_group(self, ctx, vpc, group_id):
+        sgs = list(vpc.security_groups.filter(GroupIds=[group_id]))
+        if len(sgs) == 0:
+            return None
+        return sgs[0]
 
     def read_resource(self, ctx: HandlerContext, resource: SecurityGroup) -> None:
         try:
