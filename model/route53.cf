@@ -1,0 +1,16 @@
+entity HostedZone extends AWSResource:
+    string name
+    string hosted_zone_id
+end
+
+implement HostedZone using std::none
+
+entity ResourceRecord extends AWSResource:
+    string name
+    string type
+    string[] values
+end
+
+ResourceRecord.zone [1] -- HostedZone
+
+implement ResourceRecord using std::none

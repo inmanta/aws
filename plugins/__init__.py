@@ -28,7 +28,7 @@ import binascii
 #from Crypto.PublicKey import RSA
 
 from inmanta import const
-from inmanta.agent.handler import provider, CRUDHandler, HandlerContext, ResourcePurged, SkipResource
+from inmanta.agent.handler import provider, CRUDHandler, HandlerContext, ResourcePurged, SkipResource, cache
 from inmanta.ast import OptionalValueException
 from inmanta.plugins import plugin
 from inmanta.resources import resource, PurgeableResource, ManagedResource
@@ -1250,7 +1250,7 @@ class RoutingTableHandler(AWSHandler):
 
         ctx.set("route_table", route_table)
 
-        subnets = [x.subnet for x in route_table.associations]
+        subnets = [x.subnet for x in route_table.associations if x.subnet is not None]
         subnet_names = sorted([self.get_name_from_tag(x.tags) for x in subnets])
         resource.associations = subnet_names
 #         resource.purged = False
@@ -1280,6 +1280,9 @@ class RoutingTableHandler(AWSHandler):
 
             if len(removed) > 0 and resource.manage_all:
                 raise SkipResource("Disassociating routing tables is not supported")
+        elif "name" in changes:
+            route_table = ctx.get("route_table")
+            route_table.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
         else:
             raise SkipResource("RoutingTable can not be updated, not supported")
 
@@ -1458,6 +1461,22 @@ class SubnetHandler(AWSHandler):
         ctx.info("Purging subnet %(id)s", id=subnet.id)
         subnet.delete()
         ctx.set_purged()
+
+    def facts(self, ctx, resource):
+        try:
+            subnets = list(self._ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [resource.name]}]))
+            if len(subnets) == 0:
+                return {}
+
+            elif len(subnets) > 1:
+                ctx.info("Found more than one subnet with tag Name %(name)s", name=resource.name, instances=subnets)
+                raise SkipResource()
+
+            subnet = subnets[0]
+
+            return {"subnet_id": subnet.subnet_id}
+        except botocore.exceptions.ClientError:
+            return {}
 
 
 @provider("aws::InternetGateway", name="ec2")
@@ -1773,3 +1792,75 @@ class SecurityGroupHandler(AWSHandler):
     def delete_resource(self, ctx: HandlerContext, resource: SecurityGroup) -> None:
         ctx.get("sg").delete()
         ctx.set_purged()
+
+
+@resource("aws::route53::ResourceRecord", agent="provider.name", id_attribute="theid")
+class ResourceRecord(AWSResource):
+    fields = ("name", "type", "values", "hosted_zone_id")
+
+    @staticmethod
+    def get_theid(_, resource):
+        return resource.zone.name + "/" + resource.name
+
+    @staticmethod
+    def get_hosted_zone_id(_, resource):
+        return resource.zone.hosted_zone_id
+
+
+@provider("aws::route53::ResourceRecord", name="ec2")
+class ResourceRecordHandler(AWSHandler):
+
+    def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
+        CRUDHandler.pre(self, ctx, resource)
+
+        self._session = boto3.Session(region_name=resource.provider["region"],
+                                      aws_access_key_id=resource.provider["access_key"],
+                                      aws_secret_access_key=resource.provider["secret_key"])
+        self._client = self._session.client('route53')
+
+    @cache(timeout=120, ignore=["ctx"])
+    def get_records(self, ctx, hosted_zone_id, version):
+        out = []
+
+        response = self._client.list_resource_record_sets(HostedZoneId=hosted_zone_id)
+        out.extend(response["ResourceRecordSets"])
+        while(response["IsTruncated"]):
+            response = self._client.list_resource_record_sets(
+                HostedZoneId=hosted_zone_id,
+                StartRecordName=response["NextRecordName"],
+                StartRecordType=response["NextRecordType"])
+            out.extend(response["ResourceRecordSets"])
+
+        outd = {(r["Name"], r["Type"]): [x["Value"] for x in r["ResourceRecords"]] for r in out if "ResourceRecords" in r}
+
+        ctx.debug("found record sets: %(out)s", out=outd)
+        return outd
+
+    def read_resource(self, ctx: HandlerContext, resource: ResourceRecord) -> None:
+        records = self.get_records(ctx, resource.hosted_zone_id, resource.id.version)
+        if (resource.name, resource.type) not in records:
+            ctx.set_purged()
+            raise ResourcePurged()
+        else:
+            resource.values = records[(resource.name, resource.type)]
+
+    def create_resource(self, ctx: HandlerContext, resource: ResourceRecord) -> None:
+        changes = [{
+            'Action': 'CREATE',
+            'ResourceRecordSet': {
+                'Name': resource.name,
+                'Type': resource.type,
+                'ResourceRecords': [{'Value': x} for x in resource.values]
+            }
+        }
+        ]
+        self._client.change_resource_record_sets(HostedZoneId=resource.hosted_zone_id,
+                                                 ChangeBatch={"ChangeBatch":changes})
+#         ctx.info("Create new vpc with id %(id)s", id=vpc.id)
+#         ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: VPC) -> None:
+        raise SkipResource("Not Implemented A dns record cannot be modified after creation.")
+
+    def delete_resource(self, ctx: HandlerContext, resource: VPC) -> None:
+        raise SkipResource("Not Implemented A dns record cannot be modified after creation.")
