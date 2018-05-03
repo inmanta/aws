@@ -383,6 +383,16 @@ class RDS(AWSResource):
               "port", "public", "subnet_group", "tags")
 
 
+@resource("aws::database::SubnetGroup", agent="provider.name", id_attribute="name")
+class SubnetGroup(AWSResource):
+    fields = ("name", "description", "subnetids", "tags")
+
+    @staticmethod
+    def get_subnetids(_, resource):
+        return sorted(resource.subnetids)
+
+
+
 class AWSHandler(CRUDHandler):
     def __init__(self, agent, io=None) -> None:
         CRUDHandler.__init__(self, agent, io=io)
@@ -1070,6 +1080,69 @@ class RDSHandler(AWSHandler):
     def facts(self, ctx, resource):
         facts = {}
         instances = self._rds.describe_db_instances(DBInstanceIdentifier=resource.name)["DBInstances"]
+
+        if len(instances) != 1:
+            return facts
+
+        instance = instances[0]
+
+        facts["endpoint"] = instance["Endpoint"]["Address"]
+        facts["arn"] = instance["DBInstanceArn"]
+        return facts
+
+@provider("aws::database::SubnetGroup", name="SubnetGroup")
+class SubnetGroup(AWSHandler):
+    def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
+        AWSHandler.pre(self, ctx, resource)
+        self._rds = self._session.client("rds")
+
+    def read_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        try:
+            instances = self._rds.describe_db_subnet_groups(DBSubnetGroupName=resource.name)["DBSubnetGroups"]
+        except Exception:
+            raise ResourcePurged()
+
+        if len(instances) == 0:
+            raise ResourcePurged()
+
+        elif len(instances) > 1:
+            ctx.info("Found more than one SubnetGroup instance with name %(name)s", name=resource.name, instances=instances)
+            raise SkipResource()
+
+        instance = instances[0]
+
+        ctx.warning("Found instance %(mytype)s %(instance)s", mytype=str(type(instance)), instance=instance)
+        ctx.set("instance", instance)
+
+        resource.description = instance["DBSubnetGroupDescription"]
+        
+        resource.subnetids = sorted([i["SubnetIdentifier"] for i in instance["Subnets"]])
+
+        arn = instance["DBSubnetGroupArn"]
+
+        tags = self._rds.list_tags_for_resource(ResourceName=arn)['TagList']
+
+        resource.tags = self.tags_amazon_to_internal(tags)
+
+    def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        db = self._rds.create_db_subnet_group(
+            DBSubnetGroupName=resource.name,
+            DBSubnetGroupDescription=resource.description,
+            SubnetIds=resource.subnetids,
+            Tags=self.tags_internal_to_amazon(resource.tags)
+        )
+        ctx.info("Create new db subnet group with id %(id)s", id=db["DBSubnetGroup"]["DBSubnetGroupArn"])
+        ctx.set_created()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
+        raise SkipResource("Modifying a subnet group is not supported yet.")
+
+    def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        pass
+
+    def facts(self, ctx, resource):
+        facts = {}
+        instances = self._rds.describe_db_subnet_groups(DBInstanceIdentifier=resource.name)["DBSubnetGroups"]
 
         if len(instances) != 1:
             return facts
@@ -1796,7 +1869,7 @@ class SecurityGroupHandler(AWSHandler):
 
 @resource("aws::route53::ResourceRecord", agent="provider.name", id_attribute="theid")
 class ResourceRecord(AWSResource):
-    fields = ("name", "type", "values", "hosted_zone_id")
+    fields = ("name", "type", "values", "hosted_zone_id", "ttl")
 
     @staticmethod
     def get_theid(_, resource):
@@ -1850,14 +1923,15 @@ class ResourceRecordHandler(AWSHandler):
             'ResourceRecordSet': {
                 'Name': resource.name,
                 'Type': resource.type,
+                'TTL': resource.ttl,
                 'ResourceRecords': [{'Value': x} for x in resource.values]
             }
         }
         ]
         self._client.change_resource_record_sets(HostedZoneId=resource.hosted_zone_id,
-                                                 ChangeBatch={"ChangeBatch":changes})
+                                                 ChangeBatch={"Changes":changes})
 #         ctx.info("Create new vpc with id %(id)s", id=vpc.id)
-#         ctx.set_created()
+        ctx.set_created()
 
     def update_resource(self, ctx: HandlerContext, changes: dict, resource: VPC) -> None:
         raise SkipResource("Not Implemented A dns record cannot be modified after creation.")

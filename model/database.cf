@@ -38,3 +38,14 @@ end
 
 index RDS(provider,name)
 implement RDS using std::none
+
+
+entity SubnetGroup extends aws::AWSResource:
+    string name
+    string description
+    string[] subnetids
+    dict tags = {}
+end
+
+index SubnetGroup(provider,name)
+implement SubnetGroup using std::none

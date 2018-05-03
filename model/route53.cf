@@ -9,6 +9,7 @@ entity ResourceRecord extends AWSResource:
     string name
     string type
     string[] values
+    number ttl = 600
 end
 
 ResourceRecord.zone [1] -- HostedZone
