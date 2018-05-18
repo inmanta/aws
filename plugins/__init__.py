@@ -231,11 +231,29 @@ class Volume(AWSResource):
 class ElasticSearch(AWSResource):
     fields = ("domain_name", "elasticsearch_version", "instance_type", "instance_count", "dedicated_master_enabled",
               "zone_awareness_enabled", "dedicated_master_type", "dedicated_master_count", "ebs_enabled",
-              "volume_type", "volume_size", "access_policies", "automated_snapshot_start_hour")
+              "volume_type", "volume_size", "access_policies", "automated_snapshot_start_hour", "subnet_ids",
+              "security_groups", "vpc")
 
     @staticmethod
     def get_access_policies(_, resource):
         return json.dumps(json.loads(resource.access_policies), sort_keys=True)
+
+    @staticmethod
+    def get_subnet_ids(_, resource):
+        return sorted(resource.subnet_ids)
+
+    @staticmethod
+    def get_security_groups(_, resource):
+        return [x.name for x in resource.security_groups]
+
+    @staticmethod
+    def get_vpc(_, resource):
+        vpc = set([x.vpc.name for x in resource.security_groups])
+        if len(vpc) == 0:
+            return ""
+        if len(vpc) != 1:
+            raise Exception("security groups are not in the same vpc")
+        return list(vpc)[0]
 
 
 @resource("aws::VPC", agent="provider.name", id_attribute="name")
@@ -462,22 +480,30 @@ class AWSHandler(CRUDHandler):
             return None
         return subnets[0]
 
-    def _get_vpc(self, name):
-        return list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
-
-    def _get_routingtable(self, ctx, vpcname, name):
-        vpcs = self._get_vpc(vpcname)
+    def _get_vpc(self, ctx, name):
+        vpcs =  list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
         if len(vpcs) == 0:
-            ctx.info("Unable to find vpcs with tag Name %(name)s", name=vpcname, instances=vpcs)
+            ctx.info("Unable to find vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
             raise SkipResource()
 
         elif len(vpcs) > 1:
-            ctx.info("Found more than one vpcs with tag Name %(name)s", name=vpcname, instances=vpcs)
+            ctx.info("Found more than one vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
             raise SkipResource()
 
         vpc = vpcs[0]
         ctx.set("vpc", vpc)
+        return vpc
 
+    def _get_security_groups_by_name(self, ctx, vpc, names):
+        sgs = list(self._ec2.security_groups.filter(Filters=[{"Name": "group-name", "Values": names},
+                                                                 {"Name": "vpc-id", "Values": [vpc.vpc_id]}]))
+        if len(sgs) != len(names):
+                ctx.warning("Unable to find the correct number of security groups. Found: %(groups)s",
+                            groups=[x.group_name for x in sgs])
+        return sgs
+
+    def _get_routingtable(self, ctx, vpcname, name):
+        vpc = self._get_vpc(ctx, vpcname)
         # Find the route entry in the main routing table of the VPC
         route_tables = list(vpc.route_tables.all())
 
@@ -935,7 +961,20 @@ class ElasticSearchHandler(AWSHandler):
         resource.access_policies = json.dumps(json.loads(instance["AccessPolicies"]), sort_keys=True)
         resource.automated_snapshot_start_hour = instance["SnapshotOptions"]["AutomatedSnapshotStartHour"]
 
-    def convert_resource(self, resource, update=True):
+        if "VPCOptions" in instance and "VPCId" in instance["VPCOptions"]:
+            vpco = instance["VPCOptions"]
+            resource.subnet_ids = sorted(vpco["SubnetIds"])
+            ctx.debug("found sec group ids %(sids)s",sids=vpco["SecurityGroupIds"])
+            resource.security_groups = sorted([self._ec2.SecurityGroup(sid).group_name for sid in vpco["SecurityGroupIds"]])
+
+            resource.vpc = self.get_name_from_id(ctx, vpco["VPCId"])
+        else:
+            resource.subnet_ids = []
+            resource.security_groups = []
+            resource.vpc = ""
+
+
+    def convert_resource(self, ctx, resource, update=True):
         ElasticsearchClusterConfig = {
             "InstanceType": resource.instance_type,
             "InstanceCount": resource.instance_count,
@@ -962,42 +1001,26 @@ class ElasticSearchHandler(AWSHandler):
             }
         }
 
+        if len(resource.subnet_ids)>0:
+            vpc = self._get_vpc(ctx, resource.vpc)
+            vpco = {
+                'SubnetIds': resource.subnet_ids,
+                'SecurityGroupIds': [x.id for x in self._get_security_groups_by_name(ctx, vpc, resource.security_groups)]
+            }
+            out["VPCOptions"] = vpco
+
         if update:
             del out["ElasticsearchVersion"]
         return out
 
     def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
-        ElasticsearchClusterConfig = {
-            "InstanceType": resource.instance_type,
-            "InstanceCount": resource.instance_count,
-            "DedicatedMasterEnabled":  resource.dedicated_master_enabled,
-            "ZoneAwarenessEnabled":  resource.zone_awareness_enabled,
-        }
-
-        if resource.dedicated_master_enabled:
-            ElasticsearchClusterConfig["DedicatedMasterType"] = resource.dedicated_master_type
-            ElasticsearchClusterConfig["DedicatedMasterCount"] = resource.dedicated_master_count
-
-        self._es.create_elasticsearch_domain(
-            DomainName=resource.domain_name,
-            ElasticsearchVersion=resource.elasticsearch_version,
-            ElasticsearchClusterConfig=ElasticsearchClusterConfig,
-            EBSOptions={
-                "EBSEnabled": resource.ebs_enabled,
-                "VolumeType": resource.volume_type,
-                "VolumeSize": resource.volume_size
-            },
-            AccessPolicies=resource.access_policies,
-            SnapshotOptions={
-                "AutomatedSnapshotStartHour": resource.automated_snapshot_start_hour
-            }
-        )
+        self._es.create_elasticsearch_domain(**self.convert_resource(ctx, resource, update=False))
         ctx.info("Create new Elastic Search")
         ctx.set_created()
 
     def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
         ctx.info("pushing diff %(diff)s", diff=changes)
-        self._es.update_elasticsearch_domain_config(**self.convert_resource(resource))
+        self._es.update_elasticsearch_domain_config(**self.convert_resource(ctx, resource))
         ctx.set_updated()
 
     def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
@@ -1007,7 +1030,11 @@ class ElasticSearchHandler(AWSHandler):
         facts = {}
         try:
             instance = self._es.describe_elasticsearch_domain(DomainName=resource.domain_name)["DomainStatus"]
-            facts["endpoint"] = instance["Endpoint"]
+            ctx.info("got instance %(instance)s", instance=instance)
+            if "Endpoint" in instance:
+                facts["endpoint"] = instance["Endpoint"]
+            elif "Endpoints" in instance:
+                facts["endpoint"] = instance["Endpoints"]["vpc"]
             facts["arn"] = instance["ARN"]
             facts["id"] = instance["DomainId"]
         except self._es.exceptions.ResourceNotFoundException:
@@ -1156,20 +1183,8 @@ class SubnetGroup(AWSHandler):
 
 @provider("aws::VPC", name="ec2")
 class VPCHandler(AWSHandler):
-    def _get_vpc(self, name):
-        return list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
-
     def read_resource(self, ctx: HandlerContext, resource: VPC) -> None:
-        vpcs = self._get_vpc(resource.name)
-        if len(vpcs) == 0:
-            raise ResourcePurged()
-
-        elif len(vpcs) > 1:
-            ctx.info("Found more than one vpcs with tag Name %(name)s", name=resource.name, instances=vpcs)
-            raise SkipResource()
-
-        vpc = vpcs[0]
-        ctx.set("vpc", vpc)
+        vpc = self._get_vpc(ctx, resource.name)
 
         resource.cidr_block = vpc.cidr_block
         resource.instance_tenancy = vpc.instance_tenancy
@@ -1203,22 +1218,9 @@ class VPCHandler(AWSHandler):
 
 @provider("aws::Route", name="ec2")
 class RouteHandler(AWSHandler):
-    def _get_vpc(self, name):
-        return list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
-
     def read_resource(self, ctx: HandlerContext, resource: Route) -> None:
-        vpcs = self._get_vpc(resource.vpc)
-        if len(vpcs) == 0:
-            ctx.info("Unable to find vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
-            raise SkipResource()
-
-        elif len(vpcs) > 1:
-            ctx.info("Found more than one vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
-            raise SkipResource()
-
-        vpc = vpcs[0]
-        ctx.set("vpc", vpc)
-
+        vpc = self._get_vpc(ctx, resource.vpc)
+        
         # Find the ENI that is associated with the desired nexthop
         enis = list(vpc.network_interfaces.filter(Filters=[{"Name": "private-ip-address", "Values": [resource.nexthop]}]))
 
@@ -1283,17 +1285,7 @@ class RouteHandler(AWSHandler):
 class RoutingTableHandler(AWSHandler):
 
     def read_resource(self, ctx: HandlerContext, resource: NatRoute) -> None:
-        vpcs = self._get_vpc(resource.vpc)
-        if len(vpcs) == 0:
-            ctx.info("Unable to find vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
-            raise SkipResource()
-
-        elif len(vpcs) > 1:
-            ctx.info("Found more than one vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
-            raise SkipResource()
-
-        vpc = vpcs[0]
-        ctx.set("vpc", vpc)
+        vpc = self._get_vpc(ctx, resource.vpc)
 
         # Find the route entry in the main routing table of the VPC
         route_tables = list(vpc.route_tables.all())

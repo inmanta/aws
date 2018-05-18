@@ -37,7 +37,13 @@ entity ElasticSearch extends aws::AWSResource:
     number volume_size
     string access_policies
     number automated_snapshot_start_hour=0
+
+    #VPC options
+    string[] subnet_ids = []
 end
+
+#for vpc
+ElasticSearch.security_groups [0:] -- aws::SecurityGroup
 
 index ElasticSearch(provider, domain_name)
 implement ElasticSearch using std::none
