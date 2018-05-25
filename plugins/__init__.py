@@ -383,6 +383,7 @@ class SecurityGroup(AWSResource):
 
             try:
                 json_rule["remote_group"] = rule.remote_group.name
+                json_rule["remote_group_vpc"] = rule.remote_group.vpc.name
             except Exception:
                 pass
 
@@ -1727,21 +1728,25 @@ class SecurityGroupHandler(AWSHandler):
         ctx.info("found rule", rule=rule, direction=direction)
 
         rules = []
+        done = False
         if "IpRanges" in rule and rule["IpRanges"] is not None and len(rule["IpRanges"]) > 0:
             for ip_range in rule["IpRanges"]:
                 r = current_rule.copy()
                 r["remote_ip_prefix"] = ip_range["CidrIp"]
                 rules.append(r)
-
-        elif "UserIdGroupPairs" in rule and rule["UserIdGroupPairs"] is not None and len(rule["UserIdGroupPairs"]) > 0:
+            done = True
+        if "UserIdGroupPairs" in rule and rule["UserIdGroupPairs"] is not None and len(rule["UserIdGroupPairs"]) > 0:
             if len(rule["UserIdGroupPairs"]) > 1:
                 ctx.warning("More than one security group source per rule is not support, only using the first group",
                             groups=rule["UserIdGroupPairs"])
 
-            rgi = self._get_security_group(ctx, ctx.get("vpc"), group_id=rule["UserIdGroupPairs"][0]["GroupId"])
+            rgi = self._ec2.SecurityGroup(rule["UserIdGroupPairs"][0]["GroupId"])
             current_rule["remote_group"] = rgi.group_name
+            vpcid = rgi.vpc_id
+            current_rule["remote_group_vpc"] = self.get_name_from_id(ctx, vpcid)
             rules.append(current_rule)
-        else:
+            done = True
+        if not done:
             ctx.error("No idea what to do with this rule", rule=rule, direction=direction)
         return rules
 
@@ -1816,7 +1821,10 @@ class SecurityGroupHandler(AWSHandler):
             rule["IpRanges"] = [{"CidrIp": add_rule["remote_ip_prefix"]}]
 
         elif "remote_group" in add_rule:
-            rule["UserIdGroupPairs"] = [{"GroupName": add_rule["remote_group"]}]
+            vpc = self.get_vpc(add_rule["remote_group_vpc"])
+            sgid = self._get_security_groups_by_name(ctx, vpc, [add_rule["remote_group"]])[0]
+            rule["UserIdGroupPairs"] = [{"VpcId": vpc.id,
+                                         'GroupId': sgid.id}]
         return rule
 
     def _update_rules(self, ctx, group, resource, current_rules, desired_rules):
