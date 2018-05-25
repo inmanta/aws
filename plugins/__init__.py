@@ -1704,7 +1704,12 @@ class SecurityGroupHandler(AWSHandler):
             if len(old_rules) == 0 and len(new_rules) == 0:
                 del changes["rules"]
             else:
-                changes["effective"] = {"current": old_rules, "desired": new_rules}
+                if not current.manage_all:
+                    old_rules = []
+                if len(old_rules) == 0 and len(new_rules) == 0:
+                    del changes["rules"]
+                else:
+                    changes["effective"] = {"current": old_rules, "desired": new_rules}
 
         return changes
 
@@ -1834,13 +1839,13 @@ class SecurityGroupHandler(AWSHandler):
                 group.authorize_ingress(IpPermissions=[rule])
             else:
                 group.authorize_egress(IpPermissions=[rule])
-
-        for remove_rule in remove_rules:
-            rule = self._build_rule_arg(ctx, remove_rule)
-            if remove_rule["direction"] == "ingress":
-                group.revoke_ingress(IpPermissions=[rule])
-            else:
-                group.revoke_egress(IpPermissions=[rule])
+        if resource.manage_all:
+            for remove_rule in remove_rules:
+                rule = self._build_rule_arg(ctx, remove_rule)
+                if remove_rule["direction"] == "ingress":
+                    group.revoke_ingress(IpPermissions=[rule])
+                else:
+                    group.revoke_egress(IpPermissions=[rule])
 
     def create_resource(self, ctx: HandlerContext, resource: SecurityGroup) -> None:
         vpc = ctx.get("vpc")
