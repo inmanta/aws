@@ -398,7 +398,11 @@ class SecurityGroup(AWSResource):
 @resource("aws::database::RDS", agent="provider.name", id_attribute="name")
 class RDS(AWSResource):
     fields = ("name", "allocated_storage", "flavor", "engine", "engine_version", "master_user_name", "master_user_password",
-              "port", "public", "subnet_group", "tags")
+              "port", "public", "subnet_group", "tags", "security_groups")
+
+    @staticmethod
+    def get_security_groups(_, resource):
+        return [x.name for x in resource.security_groups]
 
 
 @resource("aws::database::SubnetGroup", agent="provider.name", id_attribute="name")
@@ -518,6 +522,24 @@ class AWSHandler(CRUDHandler):
 
         ctx.set("route_table", route_table)
         return route_table
+
+    def _get_subnetgroup(self, ctx, name):
+        try:
+            instances = self._rds.describe_db_subnet_groups(DBSubnetGroupName=name)["DBSubnetGroups"]
+        except Exception:
+            raise SkipResource()
+
+        if len(instances) == 0:
+            ctx.info("Unable to find SubnetGroup instance with name %(name)s", name=resource.name, instances=instances)
+            raise SkipResource()
+
+        elif len(instances) > 1:
+            ctx.info("Found more than one SubnetGroup instance with name %(name)s", name=resource.name, instances=instances)
+            raise SkipResource()
+
+        ctx.set("sng", instances[0])
+        return instances[0]
+
 
 
 @provider("aws::ELB", name="ec2")
@@ -1042,7 +1064,7 @@ class ElasticSearchHandler(AWSHandler):
         return facts
 
 
-@provider("aws::database::RDS", name="elasticsearch")
+@provider("aws::database::RDS", name="rds")
 class RDSHandler(AWSHandler):
     def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
         AWSHandler.pre(self, ctx, resource)
@@ -1072,6 +1094,11 @@ class RDSHandler(AWSHandler):
         resource.engine_version = instance["EngineVersion"]
         resource.master_user_name = instance["MasterUsername"]
         resource.subnet_group = instance["DBSubnetGroup"]["DBSubnetGroupName"]
+
+        if len(resource.security_groups) > 0:
+            resource.security_groups = sorted([self._ec2.SecurityGroup(sid["VpcSecurityGroupId"]).group_name for sid in instance["VpcSecurityGroups"]])
+
+
         resource.port = instance["Endpoint"]["Port"]
         resource.public = instance["PubliclyAccessible"]
 
@@ -1082,24 +1109,67 @@ class RDSHandler(AWSHandler):
         resource.tags = self.tags_amazon_to_internal(tags)
 
     def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
-        db = self._rds.create_db_instance(
-            DBInstanceIdentifier=resource.name,
-            AllocatedStorage=resource.allocated_storage,
-            DBInstanceClass=resource.flavor,
-            Engine=resource.engine,
-            MasterUsername=resource.master_user_name,
-            MasterUserPassword=resource.master_user_password,
-            DBSubnetGroupName=resource.subnet_group,
-            Port=resource.port,
-            EngineVersion=resource.engine_version,
-            PubliclyAccessible=resource.public,
-            Tags=self.tags_internal_to_amazon(resource.tags)
-        )
+
+        if len(resource.security_groups) > 0:
+            # find vpc 
+            sng = self._get_subnetgroup(ctx, resource.subnet_group)
+            vpcid = sng["VpcId"]
+
+            #find secutiry groups
+            sgs = self._get_security_groups_by_name(ctx, self._ec2.Vpc(vpcid), resource.security_groups)
+            ctx.debug("found security groups: %(groups)s", groups = sgs)
+            db = self._rds.create_db_instance(
+                DBInstanceIdentifier=resource.name,
+                AllocatedStorage=resource.allocated_storage,
+                DBInstanceClass=resource.flavor,
+                Engine=resource.engine,
+                MasterUsername=resource.master_user_name,
+                MasterUserPassword=resource.master_user_password,
+                DBSubnetGroupName=resource.subnet_group,
+                Port=resource.port,
+                EngineVersion=resource.engine_version,
+                PubliclyAccessible=resource.public,
+                Tags=self.tags_internal_to_amazon(resource.tags),
+                VpcSecurityGroupIds =  [x.id for x in sgs]
+            )
+        else:
+            db = self._rds.create_db_instance(
+                DBInstanceIdentifier=resource.name,
+                AllocatedStorage=resource.allocated_storage,
+                DBInstanceClass=resource.flavor,
+                Engine=resource.engine,
+                MasterUsername=resource.master_user_name,
+                MasterUserPassword=resource.master_user_password,
+                DBSubnetGroupName=resource.subnet_group,
+                Port=resource.port,
+                EngineVersion=resource.engine_version,
+                PubliclyAccessible=resource.public,
+                Tags=self.tags_internal_to_amazon(resource.tags)
+            )
         ctx.info("Create new db with id %(id)s", id=db["DBInstance"]["DBInstanceIdentifier"])
         ctx.set_created()
 
     def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
-        raise SkipResource("Modifying a RDS is not supported yet.")
+        todo = len(changes)        
+
+        if "security_groups" in changes:
+            # find vpc 
+            sng = self._get_subnetgroup(ctx, resource.subnet_group)
+            vpcid = sng["VpcId"]
+
+            #find secutiry groups
+            sgs = self._get_security_groups_by_name(ctx, self._ec2.Vpc(vpcid), resource.security_groups)
+            ctx.debug("found security groups: %(groups)s", groups = sgs)
+
+            db = self._rds.modify_db_instance(
+                DBInstanceIdentifier=resource.name,
+                VpcSecurityGroupIds =  [x.id for x in sgs])
+            todo -= 1
+       
+        if todo > 0:
+            ctx.warning("attempting to modify running instance, diff %(diff)s", diff=changes)
+            raise SkipResource("Modifying a RDS is not supported yet.")
+        ctx.set_updated()
 
     def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
         pass
@@ -1722,21 +1792,24 @@ class SecurityGroupHandler(AWSHandler):
         ctx.info("found rule", rule=rule, direction=direction)
 
         rules = []
+        done = False
         if "IpRanges" in rule and rule["IpRanges"] is not None and len(rule["IpRanges"]) > 0:
             for ip_range in rule["IpRanges"]:
                 r = current_rule.copy()
                 r["remote_ip_prefix"] = ip_range["CidrIp"]
                 rules.append(r)
-
-        elif "UserIdGroupPairs" in rule and rule["UserIdGroupPairs"] is not None and len(rule["UserIdGroupPairs"]) > 0:
+            done = True
+        if "UserIdGroupPairs" in rule and rule["UserIdGroupPairs"] is not None and len(rule["UserIdGroupPairs"]) > 0:
             if len(rule["UserIdGroupPairs"]) > 1:
                 ctx.warning("More than one security group source per rule is not support, only using the first group",
                             groups=rule["UserIdGroupPairs"])
 
             rgi = self._get_security_group(ctx, ctx.get("vpc"), group_id=rule["UserIdGroupPairs"][0]["GroupId"])
             current_rule["remote_group"] = rgi.group_name
+           
             rules.append(current_rule)
-        else:
+            done = True
+        if not done:
             ctx.error("No idea what to do with this rule", rule=rule, direction=direction)
         return rules
 
@@ -1811,6 +1884,7 @@ class SecurityGroupHandler(AWSHandler):
             rule["IpRanges"] = [{"CidrIp": add_rule["remote_ip_prefix"]}]
 
         elif "remote_group" in add_rule:
+            sg = self.get
             rule["UserIdGroupPairs"] = [{"GroupName": add_rule["remote_group"]}]
         return rule
 
