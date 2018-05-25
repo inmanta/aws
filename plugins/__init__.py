@@ -383,6 +383,7 @@ class SecurityGroup(AWSResource):
 
             try:
                 json_rule["remote_group"] = rule.remote_group.name
+                json_rule["remote_group_vpc"] = rule.remote_group.vpc.name
             except Exception:
                 pass
 
@@ -1774,7 +1775,12 @@ class SecurityGroupHandler(AWSHandler):
             if len(old_rules) == 0 and len(new_rules) == 0:
                 del changes["rules"]
             else:
-                changes["effective"] = {"current": old_rules, "desired": new_rules}
+                if not current.manage_all:
+                    old_rules = []
+                if len(old_rules) == 0 and len(new_rules) == 0:
+                    del changes["rules"]
+                else:
+                    changes["effective"] = {"current": old_rules, "desired": new_rules}
 
         return changes
 
@@ -1804,9 +1810,10 @@ class SecurityGroupHandler(AWSHandler):
                 ctx.warning("More than one security group source per rule is not support, only using the first group",
                             groups=rule["UserIdGroupPairs"])
 
-            rgi = self._get_security_group(ctx, ctx.get("vpc"), group_id=rule["UserIdGroupPairs"][0]["GroupId"])
+            rgi = self._ec2.SecurityGroup(rule["UserIdGroupPairs"][0]["GroupId"])
             current_rule["remote_group"] = rgi.group_name
-           
+            vpcid = rgi.vpc_id
+            current_rule["remote_group_vpc"] = self.get_name_from_id(ctx, vpcid)
             rules.append(current_rule)
             done = True
         if not done:
@@ -1884,8 +1891,10 @@ class SecurityGroupHandler(AWSHandler):
             rule["IpRanges"] = [{"CidrIp": add_rule["remote_ip_prefix"]}]
 
         elif "remote_group" in add_rule:
-            sg = self.get
-            rule["UserIdGroupPairs"] = [{"GroupName": add_rule["remote_group"]}]
+            vpc = self.get_vpc(add_rule["remote_group_vpc"])
+            sgid = self._get_security_groups_by_name(ctx, vpc, [add_rule["remote_group"]])[0]
+            rule["UserIdGroupPairs"] = [{"VpcId": vpc.id,
+                                         'GroupId': sgid.id}]
         return rule
 
     def _update_rules(self, ctx, group, resource, current_rules, desired_rules):
@@ -1908,13 +1917,13 @@ class SecurityGroupHandler(AWSHandler):
                 group.authorize_ingress(IpPermissions=[rule])
             else:
                 group.authorize_egress(IpPermissions=[rule])
-
-        for remove_rule in remove_rules:
-            rule = self._build_rule_arg(ctx, remove_rule)
-            if remove_rule["direction"] == "ingress":
-                group.revoke_ingress(IpPermissions=[rule])
-            else:
-                group.revoke_egress(IpPermissions=[rule])
+        if resource.manage_all:
+            for remove_rule in remove_rules:
+                rule = self._build_rule_arg(ctx, remove_rule)
+                if remove_rule["direction"] == "ingress":
+                    group.revoke_ingress(IpPermissions=[rule])
+                else:
+                    group.revoke_egress(IpPermissions=[rule])
 
     def create_resource(self, ctx: HandlerContext, resource: SecurityGroup) -> None:
         vpc = ctx.get("vpc")
