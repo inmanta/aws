@@ -39,6 +39,11 @@ end
 index RDS(provider,name)
 implement RDS using std::none
 
+RDS.security_groups [0:] -- SecurityGroup
+"""
+    The security groups that apply to this vm. If no group is supplied the default security group will
+    be applied by EC2
+"""
 
 entity SubnetGroup extends aws::AWSResource:
     string name
