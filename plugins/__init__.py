@@ -454,7 +454,8 @@ class AWSHandler(CRUDHandler):
         return None
 
     def get_name_from_id(self, ctx, id):
-        all = self._session.client('ec2').describe_tags(Filters=[{"Name": "resource-id", "Values": [id]}])["Tags"]
+        all = self._session.client('ec2').describe_tags(Filters=[{"Name": "resource-id", "Values": [id]},
+                                                                 {"Name": "key", "Values": ['Name']} ])["Tags"]
         ctx.debug("Found tags: %(tags)s", tags=all)
         if len(all) != 1:
             return None
@@ -1806,15 +1807,13 @@ class SecurityGroupHandler(AWSHandler):
                 rules.append(r)
             done = True
         if "UserIdGroupPairs" in rule and rule["UserIdGroupPairs"] is not None and len(rule["UserIdGroupPairs"]) > 0:
-            if len(rule["UserIdGroupPairs"]) > 1:
-                ctx.warning("More than one security group source per rule is not support, only using the first group",
-                            groups=rule["UserIdGroupPairs"])
-
-            rgi = self._ec2.SecurityGroup(rule["UserIdGroupPairs"][0]["GroupId"])
-            current_rule["remote_group"] = rgi.group_name
-            vpcid = rgi.vpc_id
-            current_rule["remote_group_vpc"] = self.get_name_from_id(ctx, vpcid)
-            rules.append(current_rule)
+            for group in rule["UserIdGroupPairs"]:
+                r = current_rule.copy()
+                rgi = self._ec2.SecurityGroup(group["GroupId"])
+                r["remote_group"] = rgi.group_name
+                vpcid = rgi.vpc_id
+                r["remote_group_vpc"] = self.get_name_from_id(ctx, vpcid)
+                rules.append(r)
             done = True
         if not done:
             ctx.error("No idea what to do with this rule", rule=rule, direction=direction)
