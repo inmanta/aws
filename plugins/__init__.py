@@ -399,7 +399,7 @@ class SecurityGroup(AWSResource):
 @resource("aws::database::RDS", agent="provider.name", id_attribute="name")
 class RDS(AWSResource):
     fields = ("name", "allocated_storage", "flavor", "engine", "engine_version", "master_user_name", "master_user_password",
-              "port", "public", "subnet_group", "tags", "security_groups")
+              "port", "public", "subnet_group", "tags", "security_groups", "multi_az", "storage_type")
 
     @staticmethod
     def get_security_groups(_, resource):
@@ -1096,6 +1096,8 @@ class RDSHandler(AWSHandler):
         resource.engine_version = instance["EngineVersion"]
         resource.master_user_name = instance["MasterUsername"]
         resource.subnet_group = instance["DBSubnetGroup"]["DBSubnetGroupName"]
+        resource.storage_type = instance["StorageType"]
+        resource.multi_az=instance["MultiAZ"]
 
         if len(resource.security_groups) > 0:
             resource.security_groups = sorted([self._ec2.SecurityGroup(sid["VpcSecurityGroupId"]).group_name for sid in instance["VpcSecurityGroups"]])
@@ -1132,7 +1134,9 @@ class RDSHandler(AWSHandler):
                 EngineVersion=resource.engine_version,
                 PubliclyAccessible=resource.public,
                 Tags=self.tags_internal_to_amazon(resource.tags),
-                VpcSecurityGroupIds =  [x.id for x in sgs]
+                VpcSecurityGroupIds =  [x.id for x in sgs],
+                StorageType=resource.storage_type,
+                MultiAZ=resource.multi_az
             )
         else:
             db = self._rds.create_db_instance(
@@ -1146,7 +1150,9 @@ class RDSHandler(AWSHandler):
                 Port=resource.port,
                 EngineVersion=resource.engine_version,
                 PubliclyAccessible=resource.public,
-                Tags=self.tags_internal_to_amazon(resource.tags)
+                Tags=self.tags_internal_to_amazon(resource.tags),
+                StorageType=resource.storage_type,
+                MultiAZ=resource.multi_az
             )
         ctx.info("Create new db with id %(id)s", id=db["DBInstance"]["DBInstanceIdentifier"])
         ctx.set_created()

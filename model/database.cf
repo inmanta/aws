@@ -33,6 +33,8 @@ entity RDS extends aws::AWSResource:
     string subnet_group
     ip::port port=3306
     bool public=false
+    bool multi_az=false
+    string storage_type="gp2"
     dict tags={}
 end
 
