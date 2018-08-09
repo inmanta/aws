@@ -171,6 +171,22 @@ class ELB(AWSResource):
         return sorted([vm.name for vm in elb.instances])
 
 
+
+@resource("aws::ELBv2", agent="provider.name", id_attribute="name")
+class ELBv2(AWSResource):
+    """
+        Amazon Elastic loadbalancer
+    """
+    fields = ("name", "security_groups", "subnets", "type", "scheme", "tags")
+
+    @staticmethod
+    def get_security_groups(_, elb):
+        return sorted(elb.security_groups)
+
+
+
+
+
 @resource("aws::VirtualMachine", agent="provider.name", id_attribute="name")
 class VirtualMachine(AWSResource):
     fields = ("name", "user_data", "flavor", "image", "key_name", "key_value", "subnet_id", "source_dest_check", "tags",
@@ -456,7 +472,7 @@ class AWSHandler(CRUDHandler):
     def get_name_from_id(self, ctx, id):
         all = self._session.client('ec2').describe_tags(Filters=[{"Name": "resource-id", "Values": [id]},
                                                                  {"Name": "key", "Values": ['Name']} ])["Tags"]
-        ctx.debug("Found tags: %(tags)s", tags=all)
+        ctx.debug("Found tags (for id): %(tags)s", tags=all)
         if len(all) != 1:
             return None
         return self.get_name_from_tag(all)
@@ -669,6 +685,104 @@ class ELBHandler(AWSHandler):
         try:
             loadbalancer = self._elb.describe_load_balancers(LoadBalancerNames=[resource.name])["LoadBalancerDescriptions"][0]
             return {"dns_name": loadbalancer["DNSName"]}
+        except botocore.exceptions.ClientError:
+            return {}
+
+
+@provider("aws::ELBv2", name="ELBV2")
+class ELBV2Handler(AWSHandler):
+    """
+        This class manages ELBv2 instances on amazon ec2
+    """
+    def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
+        AWSHandler.pre(self, ctx, resource)
+        self._client = self._session.client('elbv2')
+
+    def read_resource(self, ctx, resource: ELBv2):
+        try:
+            loadbalancer = self._client.describe_load_balancers(Names=[resource.name])["LoadBalancers"][0]
+        except botocore.exceptions.ClientError:
+            raise ResourcePurged()
+
+        ctx.set("instance", loadbalancer)
+
+        resource.purged = False
+
+        resource.type = loadbalancer["Type"]
+        resource.scheme = loadbalancer["Scheme"]
+        resource.subnets = [az["SubnetId"] for az in loadbalancer["AvailabilityZones"]]
+        ctx.debug("found SGS: %(lbs)s",lbs=loadbalancer["SecurityGroups"])
+        resource.security_groups = sorted([self._ec2.SecurityGroup(x).group_name for x in loadbalancer["SecurityGroups"]])
+
+        tags = self._client.describe_tags(ResourceArns=[loadbalancer["LoadBalancerArn"]])
+        ctx.debug("found tags: %(tags)s",tags=tags)
+        resource.tags = self.tags_amazon_to_internal(tags["TagDescriptions"][0]["Tags"])
+
+    def create_resource(self, ctx: HandlerContext, resource: ELB) -> None:
+        
+        args = {
+            "Name":resource.name,
+            "Subnets":resource.subnets,
+            "Scheme":resource.scheme,
+            "Type":resource.type
+        }
+
+        if  resource.tags:
+            args["Tags"] = self.tags_internal_to_amazon(resource.tags),
+       
+        if resource.security_groups:
+            vpc = self._ec2.Subnet(resource.subnets[0]).vpc
+            sgs = self._get_security_groups_by_name(ctx, vpc, resource.security_groups)
+            args["SecurityGroups"]=[x.group_id for x in sgs]
+
+
+        self._client.create_load_balancer(**args)
+       
+        ctx.set_created()
+
+    def delete_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
+        # self._elb.delete_load_balancer(LoadBalancerName=resource.name)
+        ctx.set_purged()
+
+    def update_resource(self, ctx: HandlerContext, changes: dict, resource: VirtualMachine) -> None:
+        loadbalancer = ctx.get("instance")
+        todo = len(changes)
+
+        if "subnets" in changes:
+            ctx.info("changing subnets")
+            self._client.set_subnets(
+                LoadBalancerArn=loadbalancer["LoadBalancerArn"], 
+                Subnets=resource.subnets)
+
+            todo -= 1
+
+        if "security_groups" in changes:
+            ctx.info("changing security_groups")
+            # set the security group
+            vpc = self._ec2.Subnet(resource.subnets[0]).vpc
+            sgs = self._get_security_groups_by_name(ctx, vpc, resource.security_groups)
+
+            if sgs is None:
+                raise Exception("Security group %s is not defined at AWS" % resource.security_group)
+
+            self._client.set_security_groups(
+                LoadBalancerArn=loadbalancer["LoadBalancerArn"], 
+                SecurityGroups=[x.group_id for x in sgs])
+
+            todo -= 1
+
+        if todo > 0:
+            ctx.warning("attempting to modify LBv2, diff %(diff)s", diff=changes)
+            raise SkipResource("Not all changes are supported.")
+
+
+
+
+    def facts(self, ctx, resource):
+        try:
+            loadbalancer = self._client.describe_load_balancers(Names=[resource.name])["LoadBalancers"][0]
+            return {"dns_name": loadbalancer["DNSName"],
+                    "arn":loadbalancer["LoadBalancerArn"]}
         except botocore.exceptions.ClientError:
             return {}
 

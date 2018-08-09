@@ -53,12 +53,30 @@ entity ELB extends AWSResource:
     """
     string name
     string security_group="default"
+    string subnets
     number listen_port=80
     number dest_port=80
     string protocol="http"
 end
 
 implement ELB using std::none
+
+typedef elbtype as string matching self == "application" or self == "network"
+typedef elbscheme as string matching self == "internet-facing" or self == "internal"
+
+entity ELBv2 extends AWSResource:
+    string name
+    # sg names
+    string[] security_groups=[]
+    # subnet ids
+    string[] subnets
+    elbtype type = "application"
+    elbscheme scheme = "internal"
+    dict tags={}
+end
+
+implement ELBv2 using std::none
+
 
 entity VMAttributes extends platform::UserdataVM:
     string flavor
