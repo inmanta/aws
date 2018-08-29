@@ -934,6 +934,9 @@ class VirtualMachineHandler(AWSHandler):
         if "image" in changes and resource.ignore_wrong_image:
             todo -= 1
 
+        if "ebs_optimized" in changes:
+            todo -= 1
+
         if "root_volume_size"in changes:
             current = changes["root_volume_size"]["current"]
             desired = changes["root_volume_size"]["desired"]
