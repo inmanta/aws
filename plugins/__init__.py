@@ -505,11 +505,11 @@ class AWSHandler(CRUDHandler):
     def _get_vpc(self, ctx, name):
         vpcs =  list(self._ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [name]}]))
         if len(vpcs) == 0:
-            ctx.info("Unable to find vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
+            ctx.info("Unable to find vpcs with tag Name %(name)s", name=name, instances=vpcs)
             raise SkipResource()
 
         elif len(vpcs) > 1:
-            ctx.info("Found more than one vpcs with tag Name %(name)s", name=resource.vpc, instances=vpcs)
+            ctx.info("Found more than one vpcs with tag Name %(name)s", name=name, instances=vpcs)
             raise SkipResource()
 
         vpc = vpcs[0]
@@ -1379,11 +1379,14 @@ class SubnetGroup(AWSHandler):
 @provider("aws::VPC", name="ec2")
 class VPCHandler(AWSHandler):
     def read_resource(self, ctx: HandlerContext, resource: VPC) -> None:
-        vpc = self._get_vpc(ctx, resource.name)
-
-        resource.cidr_block = vpc.cidr_block
-        resource.instance_tenancy = vpc.instance_tenancy
-        resource.purged = False
+        try:
+            vpc = self._get_vpc(ctx, resource.name)
+            resource.cidr_block = vpc.cidr_block
+            resource.instance_tenancy = vpc.instance_tenancy
+            resource.purged = False
+        except SkipResource:
+            resource.purged = True
+            return
 
     def create_resource(self, ctx: HandlerContext, resource: VPC) -> None:
         vpc = self._ec2.create_vpc(CidrBlock=resource.cidr_block, InstanceTenancy=resource.instance_tenancy)
