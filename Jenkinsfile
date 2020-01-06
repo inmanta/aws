@@ -30,7 +30,7 @@ pipeline {
     stage("tests"){
       steps{
         withCredentials([usernamePassword(
-            credentialsId: "AKIAZWEQT5YJP25UQWNJ",
+            credentialsId: "aws-jenkins-user",
             usernameVariable: "AWS_ACCESS_KEY_ID",
             passwordVariable: "AWS_SECRET_ACCESS_KEY"
           )]){
