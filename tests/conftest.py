@@ -24,9 +24,11 @@ import pytest
 
 @pytest.fixture(scope="session")
 def ec2():
-    session = boto3.Session(region_name=os.environ["AWS_REGION"],
-                            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-                            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
+    session = boto3.Session(
+        region_name=os.environ["AWS_REGION"],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    )
     ec2 = session.resource("ec2")
 
     yield ec2
