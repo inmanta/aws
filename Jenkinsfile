@@ -2,7 +2,7 @@ pipeline {
   agent any
   triggers{
     pollSCM '* * * * *'
-    cron(BRANCH_NAME == "master" ? "H H(2-5) * * *": "")
+    cron("H H(2-5) * * *")
   }
   options { disableConcurrentBuilds() }
   parameters {
