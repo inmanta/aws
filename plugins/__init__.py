@@ -21,6 +21,7 @@ import binascii
 import json
 import logging
 import re
+import os
 import time
 
 import boto3
@@ -130,10 +131,22 @@ def decrypt(key_data: "string", cipher_text: "string") -> "string":
 
 @plugin
 def get_api_id(provider: "aws::Provider", api_name: "string") -> "string":
+    access_key = provider.access_key
+    if access_key is None:
+        access_key = os.environ.get("AWS_ACCESS_KEY")
+    if access_key is None:
+        raise Exception("AWS_ACCESS_KEY has to be provided as an environment variable.")
+
+    secret_key = provider.secret_key
+    if secret_key is None:
+        secret_key = os.environ.get("AWS_SECRET_KEY")
+    if secret_key is None:
+        raise Exception("AWS_SECRET_KEY has to be provided as an environment variable.")
+
     session = boto3.Session(
         region_name=provider.region,
-        aws_access_key_id=provider.access_key,
-        aws_secret_access_key=provider.secret_key,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
     )
     client = session.client("apigateway")
 
@@ -413,10 +426,22 @@ class AWSHandler(CRUDHandler):
     def pre(self, ctx: HandlerContext, resource: AWSResource) -> None:
         CRUDHandler.pre(self, ctx, resource)
 
+        access_key = resource.provider["access_key"]
+        if access_key is None:
+            access_key = os.environ.get("AWS_ACCESS_KEY")
+        if access_key is None:
+            raise Exception("AWS_ACCESS_KEY has to be provided as an environment variable.")
+
+        secret_key = resource.provider["secret_key"]
+        if provider.secret_key is None:
+            secret_key = os.environ.get("AWS_SECRET_KEY")
+        if secret_key is None:
+            raise Exception("AWS_SECRET_KEY has to be provided as an environment variable.")
+
         self._session = boto3.Session(
             region_name=resource.provider["region"],
-            aws_access_key_id=resource.provider["access_key"],
-            aws_secret_access_key=resource.provider["secret_key"],
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
         )
         self._ec2 = self._session.resource("ec2")
         self._elb = self._session.client("elb")
