@@ -27,8 +27,8 @@ entity Provider:
     string name
     string region
     string availability_zone
-    string access_key
-    string secret_key
+    string? access_key=null
+    string? secret_key=null
     bool auto_agent=true
 end
 
