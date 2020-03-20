@@ -20,8 +20,8 @@ import base64
 import binascii
 import json
 import logging
-import re
 import os
+import re
 import time
 
 import boto3
@@ -308,7 +308,7 @@ class ElasticSearch(AWSResource):
     def get_access_policies(_, resource):
         try:
             return json.dumps(json.loads(resource.access_policies), sort_keys=True)
-        except:
+        except Exception:
             print(resource.access_policies)
             raise
 
@@ -430,13 +430,17 @@ class AWSHandler(CRUDHandler):
         if access_key is None:
             access_key = os.environ.get("AWS_ACCESS_KEY")
         if access_key is None:
-            raise Exception("AWS_ACCESS_KEY has to be provided as an environment variable.")
+            raise Exception(
+                "AWS_ACCESS_KEY has to be provided as an environment variable."
+            )
 
         secret_key = resource.provider["secret_key"]
         if provider.secret_key is None:
             secret_key = os.environ.get("AWS_SECRET_KEY")
         if secret_key is None:
-            raise Exception("AWS_SECRET_KEY has to be provided as an environment variable.")
+            raise Exception(
+                "AWS_SECRET_KEY has to be provided as an environment variable."
+            )
 
         self._session = boto3.Session(
             region_name=resource.provider["region"],
