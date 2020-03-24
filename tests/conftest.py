@@ -77,7 +77,7 @@ def vpc(ec2, cleanup):
 
     if not tag_creation_succeeded:
         vpc.delete()
-        raise Exception("Failed to create tag")
+        raise Exception(f"Failed to associate tag with VPC {vpc.id}")
 
     yield vpc
 

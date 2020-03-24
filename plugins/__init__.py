@@ -1332,14 +1332,18 @@ class VPCHandler(AWSHandler):
 
         # This method tends to hit eventual consistency problem returning an error that the subnet does not exist
         tries = 5
-        while tries > 0:
+        tag_creation_succeeded = False
+        while not tag_creation_succeeded and tries > 0:
             try:
-                time.sleep(1)
                 vpc.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+                tag_creation_succeeded = True
             except botocore.exceptions.ClientError:
-                # TODO: raise exception on timeout?
-                pass
+                time.sleep(1)
             tries -= 1
+
+        if not tag_creation_succeeded:
+            vpc.delete()
+            raise Exception(f"Failed to associate tag with VPC {vpc.id}")
 
         ctx.info("Create new vpc with id %(id)s", id=vpc.id)
         ctx.set_created()
@@ -1512,13 +1516,18 @@ class SubnetHandler(AWSHandler):
 
         # This method tends to hit eventual consistency problem returning an error that the subnet does not exist
         tries = 5
-        while tries > 0:
+        tag_creation_succeeded = False
+        while not tag_creation_succeeded and tries > 0:
             try:
-                time.sleep(1)
                 subnet.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+                tag_creation_succeeded = True
             except botocore.exceptions.ClientError:
-                pass
+                time.sleep(1)
             tries -= 1
+
+        if not tag_creation_succeeded:
+            subnet.delete()
+            raise Exception(f"Failed to associate tag with subnet {subnet.id}")
 
         if subnet.map_public_ip_on_launch != resource.map_public_ip_on_launch:
             subnet.meta.client.modify_subnet_attribute(
