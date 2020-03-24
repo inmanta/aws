@@ -65,14 +65,16 @@ def latest_amzn_image(ec2):
 
 
 @pytest.fixture
-def vpc(ec2, cleanup):
+def vpc(ec2, resource_name_prefix, cleanup):
     vpc = ec2.create_vpc(CidrBlock="10.10.0.0/23", InstanceTenancy="default")
     # This method tends to hit eventual consistency problem returning an error that the subnet does not exist
     tries = 5
     tag_creation_succeeded = False
     while not tag_creation_succeeded and tries > 0:
         try:
-            vpc.create_tags(Tags=[{"Key": "Name", "Value": "inmanta-unit-test-subnet"}])
+            vpc.create_tags(
+                Tags=[{"Key": "Name", "Value": f"{resource_name_prefix}-subnet"}]
+            )
             tag_creation_succeeded = True
         except botocore.exceptions.ClientError:
             time.sleep(1)
