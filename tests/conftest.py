@@ -25,14 +25,32 @@ import botocore
 
 
 @pytest.fixture(scope="session")
-def ec2():
-    session = boto3.Session(
+def resource_name_prefix():
+    """
+        All resources with this name or prefixed with this name
+        will be cleaned up automatically at the end the test run
+        by the cleanup fixture.
+    """
+    return "inmanta-unit-test"
+
+
+@pytest.fixture(scope="session")
+def session():
+    yield boto3.Session(
         region_name=os.environ["AWS_REGION"],
         aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
     )
-    ec2 = session.resource("ec2")
-    yield ec2
+
+
+@pytest.fixture(scope="session")
+def ec2(session):
+    yield session.resource("ec2")
+
+
+@pytest.fixture(scope="session")
+def elb(session):
+    yield session.client("elb")
 
 
 @pytest.fixture(scope="session")
@@ -71,15 +89,15 @@ def subnet_id(ec2, vpc, cleanup):
 
 
 @pytest.fixture(autouse=True)
-def cleanup(ec2):
-    _cleanup(ec2)
+def cleanup(ec2, elb, resource_name_prefix: str):
+    _cleanup(ec2, elb, resource_name_prefix)
     yield
-    _cleanup(ec2)
+    _cleanup(ec2, elb, resource_name_prefix)
 
 
-def _cleanup(ec2):
+def _cleanup(ec2, elb, resource_name_prefix: str):
     # Delete instances
-    instances = ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": ["inmanta-unit-test*"]}])
+    instances = ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}])
     for i in instances:
         i.terminate()
     # Wait for instance termination
@@ -93,30 +111,39 @@ def _cleanup(ec2):
         raise Exception("Instances not in terminated state")
 
     # Delete InternetGateways
-    internet_gateways = ec2.internet_gateways.filter(Filters=[{"Name": "tag:Name", "Values": ["inmanta-unit-test*"]}])
+    internet_gateways = ec2.internet_gateways.filter(Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}])
     for igw in internet_gateways:
         igw.delete()
 
     # Delete vpcs
-    vpcs = ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": ["inmanta-unit-test*"]}])
+    vpcs = ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}])
     for vpc in vpcs:
         # Delete dependent security groups
         sgs = vpc.security_groups.filter(Filters=[{"Name": "vpc-id", "Values": [vpc.id]},
-                                                  {"Name": "group-name", "Values": ["inmanta-unit-test*"]}])
+                                                  {"Name": "group-name", "Values": [f"{resource_name_prefix}*"]}])
         for sg in sgs:
             sg.delete()
         # Delete dependent subnets
         subnets = ec2.subnets.filter(Filters=[{"Name": "vpc-id", "Values": [vpc.id]}])
         for subnet in subnets:
             subnet.delete()
+        # Delete vpc
         vpc.delete()
 
     # Delete volumes
-    volumes = ec2.volumes.filter(Filters=[{"Name": "tag:Name", "Values": ["inmanta-unit-test*"]}])
+    volumes = ec2.volumes.filter(Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}])
     for volume in volumes:
         volume.delete()
 
     # Delete SSH keys
-    keys = ec2.key_pairs.filter(Filters=[{"Name": "key-name", "Values": ["inmanta-unit-test*"]}])
+    keys = ec2.key_pairs.filter(Filters=[{"Name": "key-name", "Values": [f"{resource_name_prefix}"]}])
     for key in keys:
         key.delete()
+
+    # Delete loadbalancer
+    lb_descriptions = elb.describe_load_balancers()
+    lbs_to_delete = [lb_description["LoadBalancerName"] for lb_description in lb_descriptions["LoadBalancerDescriptions"] if
+                     lb_description["LoadBalancerName"].startswith(resource_name_prefix)]
+
+    for lb_name in lbs_to_delete:
+        elb.delete_load_balancer(LoadBalancerName=lb_name)
