@@ -845,7 +845,7 @@ class VirtualMachineHandler(AWSHandler):
             TagSpecifications=[{"ResourceType": "instance", "Tags": tags}],
             EbsOptimized=resource.ebs_optimized,
             BlockDeviceMappings=block_device_mapping,
-            **callargs
+            **callargs,
         )
         if len(instances) != 1:
             ctx.set_status(const.ResourceState.failed)
@@ -952,7 +952,9 @@ class VirtualMachineHandler(AWSHandler):
             instance.reload()
 
         if instance.state["Name"] != "terminated":
-            raise Exception(f"Timeout: Instance didn't get into terminated state (current_state={instance.state['Name']})")
+            raise Exception(
+                f"Timeout: Instance didn't get into terminated state (current_state={instance.state['Name']})"
+            )
 
     def facts(self, ctx, resource):
         facts = {}

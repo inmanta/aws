@@ -46,7 +46,9 @@ aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_im
 
     instances = [
         x
-        for x in ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        for x in ec2.instances.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
         if x.state["Name"] not in INSTANCE_TERMINATING_STATES
     ]
 
@@ -59,7 +61,9 @@ aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_im
 
     instances = [
         x
-        for x in ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        for x in ec2.instances.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
         if x.state["Name"] not in INSTANCE_TERMINATING_STATES
     ]
 
@@ -82,7 +86,9 @@ aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_im
 
     instances = [
         x
-        for x in ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        for x in ec2.instances.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
         if x.state["Name"] != "terminated"
     ]
 
@@ -182,7 +188,7 @@ key = ssh::Key(name="{resource_name_prefix}", public_key="{key}")
 aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
                     subnet=subnet, name="test")
 vpc = aws::VPC(name="{resource_name_prefix}", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default")
-subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc, 
+subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc,
                      map_public_ip_on_launch=true)
 aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc)
         """
@@ -276,7 +282,10 @@ vpc = aws::VPC(name="{resource_name_prefix}", provider=provider, cidr_block="10.
 
     project.deploy_resource("aws::VPC")
     vpcs = [
-        x for x in ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        x
+        for x in ec2.vpcs.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     ]
 
     assert len(vpcs) == 1
@@ -284,7 +293,10 @@ vpc = aws::VPC(name="{resource_name_prefix}", provider=provider, cidr_block="10.
     # Deploy a second time
     project.deploy_resource("aws::VPC")
     vpcs = [
-        x for x in ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        x
+        for x in ec2.vpcs.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     ]
 
     assert len(vpcs) == 1
@@ -304,7 +316,10 @@ vpc = aws::VPC(name="{resource_name_prefix}", provider=provider, cidr_block="10.
 
     project.deploy_resource("aws::VPC")
     vpcs = [
-        x for x in ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        x
+        for x in ec2.vpcs.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     ]
 
     assert len(vpcs) == 0
@@ -330,14 +345,20 @@ subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_bloc
 
     project.deploy_resource("aws::Subnet")
     subnets = [
-        x for x in ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        x
+        for x in ec2.subnets.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     ]
     assert len(subnets) == 1
 
     # Deploy a second time
     project.deploy_resource("aws::Subnet")
     subnets = [
-        x for x in ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        x
+        for x in ec2.subnets.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     ]
     assert len(subnets) == 1
 
@@ -357,7 +378,10 @@ subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_bloc
 
     project.deploy_resource("aws::Subnet")
     subnets = [
-        x for x in ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        x
+        for x in ec2.subnets.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     ]
     assert len(subnets) == 0
 
@@ -384,7 +408,10 @@ subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_bloc
     project.deploy_resource("aws::VPC")
     project.deploy_resource("aws::Subnet")
     subnets = [
-        x for x in ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        x
+        for x in ec2.subnets.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     ]
     assert len(subnets) == 1
 
@@ -406,7 +433,10 @@ subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_bloc
 
     project.deploy_resource("aws::Subnet")
     subnets = [
-        x for x in ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        x
+        for x in ec2.subnets.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     ]
     assert len(subnets) == 1
     assert not subnets[0].map_public_ip_on_launch
@@ -422,11 +452,15 @@ provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID
 vpc = aws::VPC(name="{resource_name_prefix}", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default",
                purged=true)
 subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc, purged=true)
-""")
+"""
+    )
 
     project.deploy_resource("aws::Subnet")
     subnets = [
-        x for x in ec2.subnets.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        x
+        for x in ec2.subnets.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     ]
     assert len(subnets) == 0
 
@@ -443,19 +477,24 @@ provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID
 
 vpc = aws::VPC(name="{resource_name_prefix}", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default")
 aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc)
-""")
+"""
+    )
 
     project.deploy_resource("aws::VPC")
     project.deploy_resource("aws::InternetGateway")
     igw = list(
-        ec2.internet_gateways.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        ec2.internet_gateways.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     )
     assert len(igw) == 1
 
     # Deploy a second time
     project.deploy_resource("aws::InternetGateway")
     igw = list(
-        ec2.internet_gateways.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        ec2.internet_gateways.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     )
     assert len(igw) == 1
 
@@ -466,7 +505,9 @@ aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc)
 
     project.deploy_resource("aws::InternetGateway")
     igw = list(
-        ec2.internet_gateways.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        ec2.internet_gateways.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     )
     assert len(igw) == 1
 
@@ -483,11 +524,14 @@ provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID
 vpc = aws::VPC(name="{resource_name_prefix}", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default",
                purged=true)
 aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc, purged=true)
-""")
+"""
+    )
 
     project.deploy_resource("aws::InternetGateway")
     igw = list(
-        ec2.internet_gateways.filter(Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}])
+        ec2.internet_gateways.filter(
+            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+        )
     )
     assert len(igw) == 0
 
@@ -509,7 +553,8 @@ sg_base = aws::SecurityGroup(name="{resource_name_prefix}", description="Clearwa
 aws::IPrule(group=sg_base, direction="egress", ip_protocol="all", remote_prefix="0.0.0.0/0")
 aws::IPrule(group=sg_base, direction="ingress", ip_protocol="udp", port_min=161, port_max=162, remote_prefix="0.0.0.0/0")
 aws::IPrule(group=sg_base, direction="ingress", ip_protocol="tcp", port_min=161, port_max=162, remote_prefix="0.0.0.0/0")
-        """)
+        """
+    )
 
     project.deploy_resource("aws::VPC")
     project.deploy_resource("aws::SecurityGroup")
@@ -531,7 +576,8 @@ sg_base = aws::SecurityGroup(name="{resource_name_prefix}", description="Clearwa
 aws::IPrule(group=sg_base, direction="egress", ip_protocol="all", remote_prefix="0.0.0.0/0")
 aws::IPrule(group=sg_base, direction="ingress", ip_protocol="udp", port_min=161, port_max=162, remote_prefix="0.0.0.0/0")
 aws::IPrule(group=sg_base, direction="ingress", ip_protocol="tcp", port_min=161, port_max=162, remote_prefix="0.0.0.0/0")
-        """)
+        """
+    )
 
     project.deploy_resource("aws::SecurityGroup")
     project.deploy_resource("aws::VPC")

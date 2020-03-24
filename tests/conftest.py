@@ -20,8 +20,8 @@ import os
 import time
 
 import boto3
-import pytest
 import botocore
+import pytest
 
 
 @pytest.fixture(scope="session")
@@ -55,7 +55,10 @@ def elb(session):
 
 @pytest.fixture(scope="session")
 def latest_amzn_image(ec2):
-    result = ec2.images.filter(Owners=['amazon'], Filters=[{"Name": "name", "Values": ["amzn-ami-hvm-*-x86_64-gp2"]}])
+    result = ec2.images.filter(
+        Owners=["amazon"],
+        Filters=[{"Name": "name", "Values": ["amzn-ami-hvm-*-x86_64-gp2"]}],
+    )
     name_to_image_dct = {r.meta.data["Name"]: r for r in result}
     name_latest_image = sorted(name_to_image_dct.keys())[-1]
     yield name_to_image_dct[name_latest_image]
@@ -84,7 +87,11 @@ def vpc(ec2, cleanup):
 
 @pytest.fixture
 def subnet_id(ec2, vpc, cleanup):
-    subnet = ec2.create_subnet(VpcId=vpc.id, CidrBlock="10.10.0.0/24", AvailabilityZone=f"{os.environ['AWS_REGION']}a")
+    subnet = ec2.create_subnet(
+        VpcId=vpc.id,
+        CidrBlock="10.10.0.0/24",
+        AvailabilityZone=f"{os.environ['AWS_REGION']}a",
+    )
     yield subnet.id
 
 
@@ -97,7 +104,9 @@ def cleanup(ec2, elb, resource_name_prefix: str):
 
 def _cleanup(ec2, elb, resource_name_prefix: str):
     # Delete instances
-    instances = ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}])
+    instances = ec2.instances.filter(
+        Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
+    )
     for i in instances:
         i.terminate()
     # Wait for instance termination
@@ -111,16 +120,24 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         raise Exception("Instances not in terminated state")
 
     # Delete InternetGateways
-    internet_gateways = ec2.internet_gateways.filter(Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}])
+    internet_gateways = ec2.internet_gateways.filter(
+        Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
+    )
     for igw in internet_gateways:
         igw.delete()
 
     # Delete vpcs
-    vpcs = ec2.vpcs.filter(Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}])
+    vpcs = ec2.vpcs.filter(
+        Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
+    )
     for vpc in vpcs:
         # Delete dependent security groups
-        sgs = vpc.security_groups.filter(Filters=[{"Name": "vpc-id", "Values": [vpc.id]},
-                                                  {"Name": "group-name", "Values": [f"{resource_name_prefix}*"]}])
+        sgs = vpc.security_groups.filter(
+            Filters=[
+                {"Name": "vpc-id", "Values": [vpc.id]},
+                {"Name": "group-name", "Values": [f"{resource_name_prefix}*"]},
+            ]
+        )
         for sg in sgs:
             sg.delete()
         # Delete dependent subnets
@@ -131,19 +148,26 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         vpc.delete()
 
     # Delete volumes
-    volumes = ec2.volumes.filter(Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}])
+    volumes = ec2.volumes.filter(
+        Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
+    )
     for volume in volumes:
         volume.delete()
 
     # Delete SSH keys
-    keys = ec2.key_pairs.filter(Filters=[{"Name": "key-name", "Values": [f"{resource_name_prefix}"]}])
+    keys = ec2.key_pairs.filter(
+        Filters=[{"Name": "key-name", "Values": [f"{resource_name_prefix}"]}]
+    )
     for key in keys:
         key.delete()
 
     # Delete loadbalancer
     lb_descriptions = elb.describe_load_balancers()
-    lbs_to_delete = [lb_description["LoadBalancerName"] for lb_description in lb_descriptions["LoadBalancerDescriptions"] if
-                     lb_description["LoadBalancerName"].startswith(resource_name_prefix)]
+    lbs_to_delete = [
+        lb_description["LoadBalancerName"]
+        for lb_description in lb_descriptions["LoadBalancerDescriptions"]
+        if lb_description["LoadBalancerName"].startswith(resource_name_prefix)
+    ]
 
     for lb_name in lbs_to_delete:
         elb.delete_load_balancer(LoadBalancerName=lb_name)
