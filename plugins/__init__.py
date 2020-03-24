@@ -435,7 +435,7 @@ class AWSHandler(CRUDHandler):
             )
 
         secret_key = resource.provider["secret_key"]
-        if provider.secret_key is None:
+        if secret_key is None:
             secret_key = os.environ.get("AWS_SECRET_KEY")
         if secret_key is None:
             raise Exception(
@@ -815,6 +815,11 @@ class VirtualMachineHandler(AWSHandler):
                 )
             callargs["SecurityGroupIds"] = [x.id for x in sgs]
 
+        image = list(self._ec2.images.filter(ImageIds=[resource.image]))[0]
+        block_device_mapping = image.meta.data["BlockDeviceMappings"]
+        block_device_mapping[0]["Ebs"]["VolumeSize"] = resource.root_volume_size
+        block_device_mapping[0]["Ebs"]["VolumeType"] = resource.root_volume_type
+
         ctx.info("args %(args)s", args=callargs)
 
         instances = self._ec2.create_instances(
@@ -827,6 +832,7 @@ class VirtualMachineHandler(AWSHandler):
             MaxCount=1,
             TagSpecifications=[{"ResourceType": "instance", "Tags": tags}],
             EbsOptimized=resource.ebs_optimized,
+            BlockDeviceMappings=block_device_mapping,
             **callargs
         )
         if len(instances) != 1:
@@ -932,6 +938,9 @@ class VirtualMachineHandler(AWSHandler):
             count += 1
             time.sleep(5)
             instance.reload()
+
+        if instance.state["Name"] != "terminated":
+            raise Exception(f"Timeout: Instance didn't get into terminated state (current_state={instance.state['Name']})")
 
     def facts(self, ctx, resource):
         facts = {}
@@ -1328,6 +1337,7 @@ class VPCHandler(AWSHandler):
                 time.sleep(1)
                 vpc.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
             except botocore.exceptions.ClientError:
+                # TODO: raise exception on timeout?
                 pass
             tries -= 1
 

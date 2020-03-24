@@ -17,97 +17,106 @@
 """
 import pytest
 
+# States that indicate that an instance is terminated or is getting terminated
+INSTANCE_TERMINATING_STATES = ["terminated", "shutting-down"]
 
-def test_vm(project, ec2):
+
+# def _wait_for_vm_to_be_is_running_state(ec2, instance_name: str) -> None:
+#     instances = [
+#         x
+#         for x in ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [instance_name]}])
+#         if x.state["Name"] not in INSTANCE_TERMINATING_STATES
+#     ]
+#     if not instances:
+#         raise Exception(f"No not-terminated instance found with name {instance_name}")
+#
+#     counter = 60
+#     while not all([x.state["Name"] == "running" for x in instances]) and counter > 0:
+#         print([x.state["Name"] for x in instances])
+#         time.sleep(2)
+#         for x in instances:
+#             x.reload()
+#     if not all([x.state["Name"] == "running" for x in instances]):
+#         raise Exception("Timeout: Instance didn't get into the running state")
+
+
+def test_vm(project, ec2, subnet_id, latest_amzn_image):
+    """
+        Test VM creation.
+    """
     name = "inmanta-unit-test"
     key = (
         "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQCsiYV4Cr2lD56bkVabAs2i0WyGSjJbuNHP6IDf8Ru3Pg7DJkz0JaBmETHNjIs+yQ98DNkwH9gZX0"
         "gfrSgX0YfA/PwTatdPf44dwuwWy+cjS2FAqGKdLzNVwLfO5gf74nit4NwATyzakoojHn7YVGnd9ScWfwFNd5jQ6kcLZDq/1w== "
         "bart@wolf.inmanta.com"
     )
-    # TODO: find a subnet
-    # TODO: find an ami
-    project.compile(
-        """
+    model = f"""
 import unittest
 import aws
 import ssh
-
 provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
-key = ssh::Key(name="%(name)s", public_key="%(key)s")
-aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
-                    subnet_id="subnet-e91c4880", name="%(name)s")
+key = ssh::Key(name="{name}", public_key="{key}")
+aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
+                    subnet_id="{subnet_id}", name="{name}")
         """
-        % {"name": name, "key": key}
-    )
 
+    project.compile(model)
     project.deploy_resource("aws::VirtualMachine")
 
     instances = [
         x
         for x in ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [name]}])
-        if x.state["Name"] != "terminated"
+        if x.state["Name"] not in INSTANCE_TERMINATING_STATES
     ]
 
     assert len(instances) == 1
 
     # run again -> idempotent
+    project.compile(model)
+
+    project.deploy_resource("aws::VirtualMachine")
+
+    instances = [
+        x
+        for x in ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [name]}])
+        if x.state["Name"] not in INSTANCE_TERMINATING_STATES
+    ]
+
+    assert len(instances) == 1
+
     project.compile(
-        """
+        f"""
 import unittest
 import aws
 import ssh
 
 provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
-key = ssh::Key(name="%(name)s", public_key="%(key)s")
-aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
-                    subnet_id="subnet-e91c4880", name="%(name)s")
+key = ssh::Key(name="{name}", public_key="{key}")
+aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
+                    subnet_id="{subnet_id}", name="{name}", purged=true)
         """
-        % {"name": name, "key": key}
     )
-
     project.deploy_resource("aws::VirtualMachine")
 
     instances = [
         x
         for x in ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [name]}])
-        if x.state["Name"] != "terminated"
-    ]
-
-    assert len(instances) == 1
-
-    project.compile(
-        """
-import unittest
-import aws
-import ssh
-
-provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region="eu-central-1",
-                         secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
-key = ssh::Key(name="%(name)s", public_key="%(key)s")
-aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
-                    subnet_id="subnet-e91c4880", name="%(name)s", purged=true)
-        """
-        % {"name": name, "key": key}
-    )
-
-    project.deploy_resource("aws::VirtualMachine")
-
-    instances = [
-        x
-        for x in ec2.instances.filter(Filters=[{"Name": "tag:Name", "Values": [name]}])
-        if x.state["Name"] != "terminated"
+        if x.state["Name"] not in INSTANCE_TERMINATING_STATES
     ]
 
     assert len(instances) == 0
 
 
-def test_vm_subnets(project):
+def test_vm_subnets(project, latest_amzn_image):
+    """
+        A subnet can be attached to a virtualmachine via the subnet or the subnet_id attribute.
+        One of both attributes should be set, but not both at the same time.
+    """
     # set a subnet id
     project.compile(
-        """
+        f"""
 import unittest
 import aws
 import ssh
@@ -115,14 +124,14 @@ import ssh
 provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
 key = ssh::Key(name="test", public_key="test")
-aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
+aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
                     subnet_id="subnet-e91c4880", name="test")
         """
     )
 
     # set a subnet instance
     project.compile(
-        """
+        f"""
 import unittest
 import aws
 import ssh
@@ -130,7 +139,7 @@ import ssh
 provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
 key = ssh::Key(name="test", public_key="test")
-aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
+aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
                     subnet=subnet, name="test")
 vpc = aws::VPC(name="test", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default")
 subnet = aws::Subnet(name="test", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc)
@@ -140,7 +149,7 @@ subnet = aws::Subnet(name="test", provider=provider, cidr_block="10.0.0.0/24", v
     # set none
     with pytest.raises(ValueError):
         project.compile(
-            """
+            f"""
 import unittest
 import aws
 import ssh
@@ -148,7 +157,7 @@ import ssh
 provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
 key = ssh::Key(name="test", public_key="test")
-aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
+aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
                     name="test")
         """
         )
@@ -156,7 +165,7 @@ aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", 
     # set both
     with pytest.raises(ValueError):
         project.compile(
-            """
+            f"""
 import unittest
 import aws
 import ssh
@@ -164,7 +173,7 @@ import ssh
 provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
 key = ssh::Key(name="test", public_key="test")
-aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
+aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
                     subnet=subnet, subnet_id="1214", name="test")
 vpc = aws::VPC(name="test", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default")
 subnet = aws::Subnet(name="test", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc)
@@ -172,7 +181,7 @@ subnet = aws::Subnet(name="test", provider=provider, cidr_block="10.0.0.0/24", v
         )
 
 
-def test_deploy_vm_vpc(project, ec2):
+def test_deploy_vm_vpc(project, ec2, latest_amzn_image):
     """
         Test deploying a virtual machine in a dedicated VPC
     """
@@ -183,7 +192,7 @@ def test_deploy_vm_vpc(project, ec2):
         "bart@wolf.inmanta.com"
     )
     project.compile(
-        """
+        f"""
 import unittest
 import aws
 import ssh
@@ -191,7 +200,7 @@ import ssh
 provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
 key = ssh::Key(name="{0}", public_key="{1}")
-aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
+aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
                     subnet=subnet, name="test")
 vpc = aws::VPC(name="{0}", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default")
 subnet = aws::Subnet(name="{0}", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc, map_public_ip_on_launch=true)
@@ -208,7 +217,7 @@ aws::InternetGateway(name="{0}", provider=provider, vpc=vpc)
 
     # delete it all
     project.compile(
-        """
+        f"""
 import unittest
 import aws
 import ssh
@@ -216,7 +225,7 @@ import ssh
 provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID"), region=std::get_env("AWS_REGION"),
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
 key = ssh::Key(name="{0}", public_key="{1}")
-aws::VirtualMachine(provider=provider, flavor="t2.small", image="ami-30876e5f", user_data="", public_key=key,
+aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
                     subnet=subnet, name="test", purged=true)
 vpc = aws::VPC(name="{0}", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default", purged=true)
 subnet = aws::Subnet(name="{0}", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc,
