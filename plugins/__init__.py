@@ -729,16 +729,28 @@ class VirtualMachineHandler(AWSHandler):
 
         resource.root_device_name = root
 
-        root_volumes = [
-            volume
-            for volume in instance.volumes.all()
-            if volume.attachments[0]["Device"] == root
-        ]
-        if len(root_volumes) == 1:
-            resource.root_volume_size = root_volumes[0].size
-            ctx.set("root_volume", root_volumes[0])
-        else:
-            resource.root_volume_size = 0
+        def get_root_volume():
+            """
+                When a VM is created it doesn't have a root volume for a certain time window.
+                This method waits until the root volume exists.
+            """
+            tries = 60
+            while tries > 0:
+                root_volumes = [
+                    volume
+                    for volume in instance.volumes.all()
+                    if volume.attachments[0]["Device"] == root
+                ]
+                if len(root_volumes) == 0:
+                    time.sleep(1)
+                    tries -= 1
+                else:
+                    return root_volumes[0]
+            raise Exception(f"No root volume found for VM {instance.id}")
+
+        root_volume = get_root_volume()
+        resource.root_volume_size = root_volume.size
+        ctx.set("root_volume", root_volume)
 
         resource.volumes = [
             x
