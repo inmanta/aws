@@ -102,7 +102,9 @@ implementation req for VirtualMachine:
     for volume in volumes:
         self.requires = volume
     end
-    self.requires = self.subnet
+    if self.subnet is defined:
+        self.requires = self.subnet
+    end
     self.requires = self.security_groups
 end
 

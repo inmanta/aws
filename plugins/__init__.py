@@ -20,8 +20,8 @@ import base64
 import binascii
 import json
 import logging
-import re
 import os
+import re
 import time
 
 import boto3
@@ -308,7 +308,7 @@ class ElasticSearch(AWSResource):
     def get_access_policies(_, resource):
         try:
             return json.dumps(json.loads(resource.access_policies), sort_keys=True)
-        except:
+        except Exception:
             print(resource.access_policies)
             raise
 
@@ -430,13 +430,17 @@ class AWSHandler(CRUDHandler):
         if access_key is None:
             access_key = os.environ.get("AWS_ACCESS_KEY")
         if access_key is None:
-            raise Exception("AWS_ACCESS_KEY has to be provided as an environment variable.")
+            raise Exception(
+                "AWS_ACCESS_KEY has to be provided as an environment variable."
+            )
 
         secret_key = resource.provider["secret_key"]
-        if provider.secret_key is None:
+        if secret_key is None:
             secret_key = os.environ.get("AWS_SECRET_KEY")
         if secret_key is None:
-            raise Exception("AWS_SECRET_KEY has to be provided as an environment variable.")
+            raise Exception(
+                "AWS_SECRET_KEY has to be provided as an environment variable."
+            )
 
         self._session = boto3.Session(
             region_name=resource.provider["region"],
@@ -725,16 +729,28 @@ class VirtualMachineHandler(AWSHandler):
 
         resource.root_device_name = root
 
-        root_volumes = [
-            volume
-            for volume in instance.volumes.all()
-            if volume.attachments[0]["Device"] == root
-        ]
-        if len(root_volumes) == 1:
-            resource.root_volume_size = root_volumes[0].size
-            ctx.set("root_volume", root_volumes[0])
-        else:
-            resource.root_volume_size = 0
+        def get_root_volume():
+            """
+                When a VM is created it doesn't have a root volume for a certain time window.
+                This method waits until the root volume exists.
+            """
+            tries = 60
+            while tries > 0:
+                root_volumes = [
+                    volume
+                    for volume in instance.volumes.all()
+                    if volume.attachments[0]["Device"] == root
+                ]
+                if len(root_volumes) == 0:
+                    time.sleep(1)
+                    tries -= 1
+                else:
+                    return root_volumes[0]
+            raise Exception(f"No root volume found for VM {instance.id}")
+
+        root_volume = get_root_volume()
+        resource.root_volume_size = root_volume.size
+        ctx.set("root_volume", root_volume)
 
         resource.volumes = [
             x
@@ -811,6 +827,11 @@ class VirtualMachineHandler(AWSHandler):
                 )
             callargs["SecurityGroupIds"] = [x.id for x in sgs]
 
+        image = list(self._ec2.images.filter(ImageIds=[resource.image]))[0]
+        block_device_mapping = image.meta.data["BlockDeviceMappings"]
+        block_device_mapping[0]["Ebs"]["VolumeSize"] = resource.root_volume_size
+        block_device_mapping[0]["Ebs"]["VolumeType"] = resource.root_volume_type
+
         ctx.info("args %(args)s", args=callargs)
 
         instances = self._ec2.create_instances(
@@ -823,7 +844,8 @@ class VirtualMachineHandler(AWSHandler):
             MaxCount=1,
             TagSpecifications=[{"ResourceType": "instance", "Tags": tags}],
             EbsOptimized=resource.ebs_optimized,
-            **callargs
+            BlockDeviceMappings=block_device_mapping,
+            **callargs,
         )
         if len(instances) != 1:
             ctx.set_status(const.ResourceState.failed)
@@ -928,6 +950,11 @@ class VirtualMachineHandler(AWSHandler):
             count += 1
             time.sleep(5)
             instance.reload()
+
+        if instance.state["Name"] != "terminated":
+            raise Exception(
+                f"Timeout: Instance didn't get into terminated state (current_state={instance.state['Name']})"
+            )
 
     def facts(self, ctx, resource):
         facts = {}
@@ -1319,13 +1346,18 @@ class VPCHandler(AWSHandler):
 
         # This method tends to hit eventual consistency problem returning an error that the subnet does not exist
         tries = 5
-        while tries > 0:
+        tag_creation_succeeded = False
+        while not tag_creation_succeeded and tries > 0:
             try:
-                time.sleep(1)
                 vpc.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+                tag_creation_succeeded = True
             except botocore.exceptions.ClientError:
-                pass
+                time.sleep(1)
             tries -= 1
+
+        if not tag_creation_succeeded:
+            vpc.delete()
+            raise Exception(f"Failed to associate tag with VPC {vpc.id}")
 
         ctx.info("Create new vpc with id %(id)s", id=vpc.id)
         ctx.set_created()
@@ -1498,13 +1530,18 @@ class SubnetHandler(AWSHandler):
 
         # This method tends to hit eventual consistency problem returning an error that the subnet does not exist
         tries = 5
-        while tries > 0:
+        tag_creation_succeeded = False
+        while not tag_creation_succeeded and tries > 0:
             try:
-                time.sleep(1)
                 subnet.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+                tag_creation_succeeded = True
             except botocore.exceptions.ClientError:
-                pass
+                time.sleep(1)
             tries -= 1
+
+        if not tag_creation_succeeded:
+            subnet.delete()
+            raise Exception(f"Failed to associate tag with subnet {subnet.id}")
 
         if subnet.map_public_ip_on_launch != resource.map_public_ip_on_launch:
             subnet.meta.client.modify_subnet_attribute(
