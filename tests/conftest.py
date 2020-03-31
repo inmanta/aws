@@ -126,6 +126,8 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
     )
     for igw in internet_gateways:
+        for attached_vpc in igw.meta.data["Attachments"]:
+            igw.detach_from_vpc(DryRun=False, VpcId=attached_vpc["VpcId"])
         igw.delete()
 
     # Delete vpcs
