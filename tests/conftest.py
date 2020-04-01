@@ -113,7 +113,7 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         i.terminate()
     # Wait for instance termination
     count = 0
-    while not all([i.state["Name"] == "terminated" for i in instances]) and count < 60:
+    while not all([i.state["Name"] == "terminated" for i in instances]) and count < 120:
         count += 1
         time.sleep(5)
         for i in instances:
