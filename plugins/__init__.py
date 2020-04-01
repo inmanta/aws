@@ -946,7 +946,7 @@ class VirtualMachineHandler(AWSHandler):
         instance.terminate()
 
         count = 0
-        while instance.state["Name"] != "terminated" and count < 30:
+        while instance.state["Name"] != "terminated" and count < 120:
             count += 1
             time.sleep(5)
             instance.reload()
