@@ -118,7 +118,7 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         time.sleep(5)
         for i in instances:
             i.reload()
-    if count >= 60:
+    if not all([i.state["Name"] == "terminated" for i in instances]):
         raise Exception("Instances not in terminated state")
 
     # Delete InternetGateways
