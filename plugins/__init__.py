@@ -22,7 +22,6 @@ import logging
 import os
 import re
 import time
-
 import boto3
 import botocore
 
