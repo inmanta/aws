@@ -16,7 +16,6 @@
     Contact: code@inmanta.com
 """
 
-import base64
 import binascii
 import json
 import logging
@@ -26,7 +25,7 @@ import time
 
 import boto3
 import botocore
-from Crypto.PublicKey import RSA
+
 from inmanta import const
 from inmanta.agent.handler import (
     CRUDHandler,
@@ -85,48 +84,6 @@ def long_to_bytes(val, endianness="big"):
         s = s[::-1]
 
     return s
-
-
-def decrypt_password(rsa_key, password):
-    # Undo the whatever-they-do to the ciphertext to get the integer
-    encrypted_data = base64.b64decode(password)
-    ciphertext = int(binascii.hexlify(encrypted_data), 16)
-
-    # Decrypt it
-    plaintext = rsa_key.decrypt(ciphertext)
-
-    # This is the annoying part.  long -> byte array
-    decrypted_data = long_to_bytes(plaintext)
-
-    # Now Unpad it
-    unpadded_data = pkcs1_unpad(decrypted_data)
-
-    # Done
-    return unpadded_data
-
-
-@plugin
-def decrypt(key_data: "string", cipher_text: "string") -> "string":
-    # Possibly there is no password available (yet)
-    cipher_text = cipher_text.strip()
-    if cipher_text == "":
-        return ""
-
-    # Import the key
-    try:
-        key = RSA.importKey(key_data)
-    except ValueError as ex:
-        raise Exception(
-            "Could not import SSH Key (Is it an RSA key? Is it password protected?): %s"
-            % ex
-        )
-
-    pw = decrypt_password(key, cipher_text)
-
-    if pw is None:
-        raise Exception("Failed to decrypt password")
-
-    return pw
 
 
 @plugin
