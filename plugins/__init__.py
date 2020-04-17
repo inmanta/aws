@@ -17,13 +17,13 @@
 """
 
 import binascii
+import boto3
+import botocore
 import json
 import logging
 import os
 import re
 import time
-import boto3
-import botocore
 
 from inmanta import const
 from inmanta.agent.handler import (
