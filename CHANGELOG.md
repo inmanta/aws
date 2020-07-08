@@ -1,3 +1,6 @@
+V3.0.3
+ - Upgrade boto3 dependency to v1.14
+
 V3.0.2
  - Pin dependencies using ~=
 
