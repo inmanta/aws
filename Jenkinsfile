@@ -4,10 +4,10 @@ pipeline {
     cron(BRANCH_NAME == "master" ? "H H(2-5) * * *": "")
   }
   options { disableConcurrentBuilds() }
-  parameters {
-    booleanParam(name:"pytest_inmanta_dev" ,defaultValue: false, description: 'Changes the index used to install pytest-inmanta to the inmanta dev index')
-  }
   environment {
+    PIP_INDEX_URL='https://artifacts.internal.inmanta.com/inmanta/dev'
+    PIP_PRE="true"
+    PYTEST_INMANTA_DEV="true"
     AWS_REGION="eu-west-1"
   }
   stages {
@@ -19,11 +19,7 @@ pipeline {
           ${WORKSPACE}/env/bin/pip install -U pip
           ${WORKSPACE}/env/bin/pip install -r requirements.txt
           ${WORKSPACE}/env/bin/pip install -r requirements.dev.txt
-          # make sure pytest inmanta is the required version
           '''
-          if (params.pytest_inmanta_dev) {
-            sh"""${WORKSPACE}/env/bin/pip install --pre -U pytest-inmanta -i https://artifacts.internal.inmanta.com/inmanta/dev"""
-          }
         }
       }
     }
@@ -48,15 +44,6 @@ pipeline {
           ${WORKSPACE}/env/bin/flake8 plugins tests
           '''
         }
-      }
-    }
-  }
-  post{
-    always{
-      script{
-        sh'''
-        ${WORKSPACE}/env/bin/pip uninstall -y pytest-inmanta
-        '''
       }
     }
   }
