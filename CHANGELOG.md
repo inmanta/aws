@@ -1,3 +1,6 @@
+v3.0.4
+ - Fix dependencies
+
 V3.0.3
  - Upgrade boto3 dependency to v1.14
 
