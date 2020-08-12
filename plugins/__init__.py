@@ -1482,7 +1482,15 @@ class SubnetHandler(AWSHandler):
         if resource.availability_zone is not None:
             args["AvailabilityZone"] = resource.availability_zone
 
-        subnet = self._ec2.create_subnet(**args)
+        tries = 5
+        while tries > 0:
+            try:
+                subnet = self._ec2.create_subnet(**args)
+            except botocore.exceptions.InvalidVpcID:
+                time.sleep(5)
+                tries -= 1
+            else:
+                break
 
         # This method tends to hit eventual consistency problem returning an error that the subnet does not exist
         tries = 5
@@ -1492,7 +1500,7 @@ class SubnetHandler(AWSHandler):
                 subnet.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
                 tag_creation_succeeded = True
             except botocore.exceptions.ClientError:
-                time.sleep(1)
+                time.sleep(5)
             tries -= 1
 
         if not tag_creation_succeeded:
