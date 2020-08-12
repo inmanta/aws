@@ -77,7 +77,7 @@ def vpc(ec2, resource_name_prefix, cleanup):
             )
             tag_creation_succeeded = True
         except botocore.exceptions.ClientError:
-            time.sleep(1)
+            time.sleep(5)
         tries -= 1
 
     if not tag_creation_succeeded:
