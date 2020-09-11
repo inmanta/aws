@@ -118,7 +118,7 @@ def get_api_id(provider: "aws::Provider", api_name: "string") -> "string":
 # # Handlers
 def get_config(exporter, vm):
     """
-        Create the auth url that openstack can use
+    Create the auth url that openstack can use
     """
     if vm.iaas.iaas_config_string is None:
         raise Exception("A valid config string is required")
@@ -145,7 +145,7 @@ class AWSResource(PurgeableResource, ManagedResource):
 @resource("aws::ELB", agent="provider.name", id_attribute="name")
 class ELB(AWSResource):
     """
-        Amazon Elastic loadbalancer
+    Amazon Elastic loadbalancer
     """
 
     fields = (
@@ -196,7 +196,7 @@ class VirtualMachine(AWSResource):
     @staticmethod
     def get_subnet_id(_, resource):
         """
-            Validation of subnet and subnet_id combination is done in get_subnet
+        Validation of subnet and subnet_id combination is done in get_subnet
         """
         try:
             subnet_id = resource.subnet_id
@@ -310,7 +310,7 @@ class Route(AWSResource):
 @resource("aws::SecurityGroup", agent="provider.name", id_attribute="name")
 class SecurityGroup(AWSResource):
     """
-        A security group in an OpenStack tenant
+    A security group in an OpenStack tenant
     """
 
     fields = ("name", "description", "manage_all", "rules", "retries", "wait", "vpc")
@@ -430,7 +430,7 @@ class AWSHandler(CRUDHandler):
 @provider("aws::ELB", name="ec2")
 class ELBHandler(AWSHandler):
     """
-        This class manages ELB instances on amazon ec2
+    This class manages ELB instances on amazon ec2
     """
 
     def _get_name(self, vm):
@@ -687,8 +687,8 @@ class VirtualMachineHandler(AWSHandler):
 
         def get_root_volume():
             """
-                When a VM is created it doesn't have a root volume for a certain time window.
-                This method waits until the root volume exists.
+            When a VM is created it doesn't have a root volume for a certain time window.
+            This method waits until the root volume exists.
             """
             tries = 60
             while tries > 0:
@@ -1774,7 +1774,7 @@ class SecurityGroupHandler(AWSHandler):
 
     def _update_rules(self, ctx, group, resource, current_rules, desired_rules):
         """
-            Update the rules to the desired state
+        Update the rules to the desired state
         """
         remove_rules = list(current_rules)
         add_rules = list(desired_rules)

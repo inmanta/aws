@@ -23,7 +23,7 @@ INSTANCE_TERMINATING_STATES = ["terminated", "shutting-down"]
 
 def test_vm(project, ec2, subnet_id, latest_amzn_image, resource_name_prefix: str):
     """
-        Test VM creation.
+    Test VM creation.
     """
     key = (
         "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQCsiYV4Cr2lD56bkVabAs2i0WyGSjJbuNHP6IDf8Ru3Pg7DJkz0JaBmETHNjIs+yQ98DNkwH9gZX0"
@@ -97,8 +97,8 @@ aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_im
 
 def test_vm_subnets(project, latest_amzn_image):
     """
-        A subnet can be attached to a virtualmachine via the subnet or the subnet_id attribute.
-        One of both attributes should be set, but not both at the same time.
+    A subnet can be attached to a virtualmachine via the subnet or the subnet_id attribute.
+    One of both attributes should be set, but not both at the same time.
     """
     # set a subnet id
     project.compile(
@@ -169,7 +169,7 @@ subnet = aws::Subnet(name="test", provider=provider, cidr_block="10.0.0.0/24", v
 
 def test_deploy_vm_vpc(project, ec2, latest_amzn_image, resource_name_prefix: str):
     """
-        Test deploying a virtual machine in a dedicated VPC
+    Test deploying a virtual machine in a dedicated VPC
     """
     key = (
         "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQCsiYV4Cr2lD56bkVabAs2i0WyGSjJbuNHP6IDf8Ru3Pg7DJkz0JaBmETHNjIs+yQ98DNkwH9gZX0"
@@ -267,7 +267,7 @@ aws::ELB(provider=provider, name="{resource_name_prefix}")
 
 def test_vpc(project, ec2, resource_name_prefix: str):
     """
-        Test VPC creation/deletion
+    Test VPC creation/deletion
     """
     project.compile(
         f"""
@@ -327,7 +327,7 @@ vpc = aws::VPC(name="{resource_name_prefix}", provider=provider, cidr_block="10.
 
 def test_subnet(project, ec2, resource_name_prefix: str):
     """
-        Test subnet creation/deletion
+    Test subnet creation/deletion
     """
     project.compile(
         f"""
@@ -390,7 +390,7 @@ subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_bloc
 
 def test_subnet_map_public(project, ec2, resource_name_prefix: str):
     """
-        Test the map_public_ip_on_launch feature of a aws::Subnet resource
+    Test the map_public_ip_on_launch feature of a aws::Subnet resource
     """
     project.compile(
         f"""
