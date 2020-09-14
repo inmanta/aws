@@ -27,9 +27,9 @@ import pytest
 @pytest.fixture(scope="session")
 def resource_name_prefix():
     """
-        All resources with this name or prefixed with this name
-        will be cleaned up automatically at the end the test run
-        by the cleanup fixture.
+    All resources with this name or prefixed with this name
+    will be cleaned up automatically at the end the test run
+    by the cleanup fixture.
     """
     return "inmanta-unit-test"
 
