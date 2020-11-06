@@ -175,3 +175,11 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
 
     for lb_name in lbs_to_delete:
         elb.delete_load_balancer(LoadBalancerName=lb_name)
+
+
+def retry_limited(fun, timeout, *args, **kwargs):
+    start = time.time()
+    while time.time() - start < timeout and not fun(*args, **kwargs):
+        time.sleep(1)
+    if not fun(*args, **kwargs):
+        raise AssertionError("Bounded wait failed")
