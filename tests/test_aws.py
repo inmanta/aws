@@ -16,6 +16,7 @@
     Contact: code@inmanta.com
 """
 import pytest
+from conftest import retry_limited
 
 # States that indicate that an instance is terminated or is getting terminated
 INSTANCE_TERMINATING_STATES = ["terminated", "shutting-down"]
@@ -467,6 +468,22 @@ subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_bloc
     project.deploy_resource("aws::VPC")
 
 
+def assert_attachments_internet_gateway(
+    ec2, resource_name: str, nr_attachments: int
+) -> None:
+    def func():
+        igws = list(
+            ec2.internet_gateways.filter(
+                Filters=[{"Name": "tag:Name", "Values": [resource_name]}]
+            )
+        )
+        if not igws:
+            return False
+        return len(igws[0].attachments) == nr_attachments
+
+    retry_limited(func, timeout=10)
+
+
 def test_internet_gateway(project, ec2, resource_name_prefix: str):
     project.compile(
         f"""
@@ -501,17 +518,10 @@ aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc)
     # Remove vpc and test attaching it again
     igw[0].detach_from_vpc(VpcId=igw[0].attachments[0]["VpcId"])
 
-    assert len(igw[0].attachments) == 0
+    assert_attachments_internet_gateway(ec2, resource_name_prefix, 0)
 
     project.deploy_resource("aws::InternetGateway")
-    igw = list(
-        ec2.internet_gateways.filter(
-            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
-        )
-    )
-    assert len(igw) == 1
-
-    assert len(igw[0].attachments) == 1
+    assert_attachments_internet_gateway(ec2, resource_name_prefix, 1)
 
     # Purge it
     project.compile(
@@ -528,12 +538,16 @@ aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc, 
     )
 
     project.deploy_resource("aws::InternetGateway")
-    igw = list(
-        ec2.internet_gateways.filter(
-            Filters=[{"Name": "tag:Name", "Values": [resource_name_prefix]}]
+
+    def is_igw_deleted(resource_name: str) -> bool:
+        igws = list(
+            ec2.internet_gateways.filter(
+                Filters=[{"Name": "tag:Name", "Values": [resource_name]}]
+            )
         )
-    )
-    assert len(igw) == 0
+        return len(igws) == 0
+
+    retry_limited(is_igw_deleted, timeout=10, resource_name=resource_name_prefix)
 
     project.deploy_resource("aws::VPC")
 

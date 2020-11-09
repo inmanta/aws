@@ -1588,8 +1588,17 @@ class InternetGatewayHandler(AWSHandler):
 
     def create_resource(self, ctx: HandlerContext, resource: InternetGateway) -> None:
         vpc = self.get_vpc(resource.name)
-        igw = self._ec2.create_internet_gateway()
-        igw.create_tags(Tags=[{"Key": "Name", "Value": resource.name}])
+        igw = self._ec2.create_internet_gateway(
+            TagSpecifications=[
+                {
+                    "ResourceType": "internet-gateway",
+                    "Tags": [
+                        {"Key": "Name", "Value": resource.name},
+                    ],
+                },
+            ]
+        )
+        self._wait_until_creation_is_done(resource.name)
         igw.attach_to_vpc(VpcId=vpc.id)
         ctx.info("Created new internet gateway with id %(id)s", id=igw.id)
 
@@ -1604,6 +1613,23 @@ class InternetGatewayHandler(AWSHandler):
                 tbl.create_route(DestinationCidrBlock="0.0.0.0/0", GatewayId=igw.id)
 
         ctx.set_created()
+
+    def _wait_until_creation_is_done(
+        self, resource_name: str, timeout: int = 30
+    ) -> None:
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            igws = list(
+                self._ec2.internet_gateways.filter(
+                    Filters=[{"Name": "tag:Name", "Values": [resource_name]}]
+                )
+            )
+            if igws:
+                return
+            time.sleep(1)
+        raise Exception(
+            f"Timeout: waiting for creation internet gateway {resource_name} after {timeout}sec"
+        )
 
     def update_resource(
         self, ctx: HandlerContext, changes: dict, resource: InternetGateway
