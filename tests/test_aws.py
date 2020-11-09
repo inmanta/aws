@@ -16,7 +16,6 @@
     Contact: code@inmanta.com
 """
 import pytest
-
 from conftest import retry_limited
 
 # States that indicate that an instance is terminated or is getting terminated
@@ -469,7 +468,9 @@ subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_bloc
     project.deploy_resource("aws::VPC")
 
 
-def assert_attachments_internet_gateway(ec2, resource_name: str, nr_attachments: int) -> None:
+def assert_attachments_internet_gateway(
+    ec2, resource_name: str, nr_attachments: int
+) -> None:
     def func():
         igws = list(
             ec2.internet_gateways.filter(
@@ -479,6 +480,7 @@ def assert_attachments_internet_gateway(ec2, resource_name: str, nr_attachments:
         if not igws:
             return False
         return len(igws[0].attachments) == nr_attachments
+
     retry_limited(func, timeout=10)
 
 

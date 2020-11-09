@@ -1591,13 +1591,10 @@ class InternetGatewayHandler(AWSHandler):
         igw = self._ec2.create_internet_gateway(
             TagSpecifications=[
                 {
-                    'ResourceType': 'internet-gateway',
-                    'Tags': [
-                        {
-                            'Key': 'Name',
-                            'Value': resource.name
-                        },
-                    ]
+                    "ResourceType": "internet-gateway",
+                    "Tags": [
+                        {"Key": "Name", "Value": resource.name},
+                    ],
                 },
             ]
         )
@@ -1617,7 +1614,9 @@ class InternetGatewayHandler(AWSHandler):
 
         ctx.set_created()
 
-    def _wait_until_creation_is_done(self, resource_name: str, timeout: int = 30) -> None:
+    def _wait_until_creation_is_done(
+        self, resource_name: str, timeout: int = 30
+    ) -> None:
         start_time = time.time()
         while time.time() - start_time < timeout:
             igws = list(
