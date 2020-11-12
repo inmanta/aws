@@ -15,11 +15,15 @@
 
     Contact: code@inmanta.com
 """
+import logging
+
 import pytest
 from conftest import retry_limited
 
 # States that indicate that an instance is terminated or is getting terminated
 INSTANCE_TERMINATING_STATES = ["terminated", "shutting-down"]
+
+LOGGER = logging.getLogger(__name__)
 
 
 def test_vm(project, ec2, subnet_id, latest_amzn_image, resource_name_prefix: str):
@@ -478,10 +482,17 @@ def assert_attachments_internet_gateway(
             )
         )
         if not igws:
+            LOGGER.info(f"Internet gateway '{resource_name}' doesn't exist.")
             return False
+        LOGGER.info(
+            "Internet gateway '%s' has attachments %s (expected amount=%d)",
+            resource_name,
+            igws[0].attachments,
+            nr_attachments,
+        )
         return len(igws[0].attachments) == nr_attachments
 
-    retry_limited(func, timeout=10)
+    retry_limited(func, timeout=60)
 
 
 def test_internet_gateway(project, ec2, resource_name_prefix: str):
@@ -515,9 +526,10 @@ aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc)
     )
     assert len(igw) == 1
 
+    assert_attachments_internet_gateway(ec2, resource_name_prefix, 1)
+
     # Remove vpc and test attaching it again
     igw[0].detach_from_vpc(VpcId=igw[0].attachments[0]["VpcId"])
-
     assert_attachments_internet_gateway(ec2, resource_name_prefix, 0)
 
     project.deploy_resource("aws::InternetGateway")
@@ -545,9 +557,10 @@ aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc, 
                 Filters=[{"Name": "tag:Name", "Values": [resource_name]}]
             )
         )
+        LOGGER.info("Found internet gateways: %s (expected [])", igws)
         return len(igws) == 0
 
-    retry_limited(is_igw_deleted, timeout=10, resource_name=resource_name_prefix)
+    retry_limited(is_igw_deleted, timeout=60, resource_name=resource_name_prefix)
 
     project.deploy_resource("aws::VPC")
 

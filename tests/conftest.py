@@ -179,7 +179,8 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
 
 def retry_limited(fun, timeout, *args, **kwargs):
     start = time.time()
-    while time.time() - start < timeout and not fun(*args, **kwargs):
+    while time.time() - start < timeout:
+        if fun(*args, **kwargs):
+            return
         time.sleep(1)
-    if not fun(*args, **kwargs):
-        raise AssertionError("Bounded wait failed")
+    raise AssertionError("Bounded wait failed")
