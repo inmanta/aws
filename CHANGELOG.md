@@ -1,5 +1,5 @@
 v3.0.7
- - Fix unstable test test_internet_gateway (#209) 
+ - Fix unstable test test_internet_gateway (#209)
 
 v3.0.6
  - Use inmanta-dev-dependencies package 
