@@ -1,3 +1,6 @@
+v3.0.6
+ - Use inmanta-dev-dependencies package 
+
 v3.0.5
  - Fix race condition when attaching tags to an internet gateway (#133)
 
