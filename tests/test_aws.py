@@ -492,7 +492,7 @@ def assert_attachments_internet_gateway(
         )
         return len(igws[0].attachments) == nr_attachments
 
-    retry_limited(func, timeout=60)
+    retry_limited(func, timeout=120)
 
 
 def test_internet_gateway(project, ec2, resource_name_prefix: str):
@@ -560,7 +560,7 @@ aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc, 
         LOGGER.info("Found internet gateways: %s (expected [])", igws)
         return len(igws) == 0
 
-    retry_limited(is_igw_deleted, timeout=60, resource_name=resource_name_prefix)
+    retry_limited(is_igw_deleted, timeout=120, resource_name=resource_name_prefix)
 
     project.deploy_resource("aws::VPC")
 
