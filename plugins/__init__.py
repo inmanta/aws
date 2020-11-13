@@ -1615,7 +1615,7 @@ class InternetGatewayHandler(AWSHandler):
         ctx.set_created()
 
     def _wait_until_creation_is_done(
-        self, resource_name: str, timeout: int = 30
+        self, resource_name: str, timeout: int = 120
     ) -> None:
         start_time = time.time()
         while time.time() - start_time < timeout:
