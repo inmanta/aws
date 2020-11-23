@@ -215,7 +215,7 @@ provider = aws::Provider(name="test", access_key=std::get_env("AWS_ACCESS_KEY_ID
                          secret_key=std::get_env("AWS_SECRET_ACCESS_KEY"), availability_zone="a")
 key = ssh::Key(name="{resource_name_prefix}", public_key="{key}")
 aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_image.id}", user_data="", public_key=key,
-                    subnet=subnet, name="test", purged=true)
+                    subnet=subnet, name="{resource_name_prefix}", purged=true)
 vpc = aws::VPC(name="{resource_name_prefix}", provider=provider, cidr_block="10.0.0.0/23", instance_tenancy="default",
                purged=true)
 subnet = aws::Subnet(name="{resource_name_prefix}", provider=provider, cidr_block="10.0.0.0/24", vpc=vpc,
