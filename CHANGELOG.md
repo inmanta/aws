@@ -1,3 +1,6 @@
+v3.0.8
+ - Fix broken VM cleanup in tests
+
 v3.0.7
  - Fix unstable test test_internet_gateway (#209)
 
