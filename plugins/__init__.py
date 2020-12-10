@@ -1833,7 +1833,7 @@ class SecurityGroupHandler(AWSHandler):
         )
         client = self._session.client("ec2")
         waiter = client.get_waiter('security_group_exists')
-        waiter.wait(GroupIds=[sg.id], VpcIds=[vpc.id])
+        waiter.wait(GroupIds=[sg.id])
         current_rules = self._build_current_rules(ctx, sg)
         self._update_rules(ctx, sg, resource, current_rules, resource.rules)
         ctx.set_created()
