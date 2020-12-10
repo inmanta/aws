@@ -1831,6 +1831,9 @@ class SecurityGroupHandler(AWSHandler):
         sg = vpc.create_security_group(
             GroupName=resource.name, Description=resource.description, VpcId=vpc.id
         )
+        client = self._session.client("ec2")
+        waiter = client.get_waiter('security_group_exists')
+        waiter.wait(GroupIds=[sg.id], VpcIds=[vpc.id])
         current_rules = self._build_current_rules(ctx, sg)
         self._update_rules(ctx, sg, resource, current_rules, resource.rules)
         ctx.set_created()
