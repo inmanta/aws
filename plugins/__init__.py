@@ -1592,9 +1592,7 @@ class InternetGatewayHandler(AWSHandler):
             TagSpecifications=[
                 {
                     "ResourceType": "internet-gateway",
-                    "Tags": [
-                        {"Key": "Name", "Value": resource.name},
-                    ],
+                    "Tags": [{"Key": "Name", "Value": resource.name},],
                 },
             ]
         )
@@ -1832,7 +1830,7 @@ class SecurityGroupHandler(AWSHandler):
             GroupName=resource.name, Description=resource.description, VpcId=vpc.id
         )
         client = self._session.client("ec2")
-        waiter = client.get_waiter('security_group_exists')
+        waiter = client.get_waiter("security_group_exists")
         waiter.wait(GroupIds=[sg.id])
         current_rules = self._build_current_rules(ctx, sg)
         self._update_rules(ctx, sg, resource, current_rules, resource.rules)
