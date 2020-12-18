@@ -1710,7 +1710,7 @@ class SecurityGroupHandler(AWSHandler):
                 ctx, group_id=rule["UserIdGroupPairs"][0]["GroupId"]
             )
             current_rule["remote_group"] = rgi.name
-            rules.append(r)
+            rules.append(rgi)
         else:
             ctx.error(
                 "No idea what to do with this rule", rule=rule, direction=direction

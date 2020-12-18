@@ -1,6 +1,8 @@
+v3.0.9
+ - Fix a race condition when Creating a VM with security groups
+
 v3.0.8
  - Fix broken VM cleanup in tests
- - Fix a race condition when Creating a VM with security groups
 
 v3.0.7
  - Fix unstable test test_internet_gateway (#209)
