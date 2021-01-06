@@ -1,4 +1,4 @@
-boto3==1.16.48
+boto3==1.16.49
 
 docutils==0.16
 jmespath==0.10.0
