@@ -16,14 +16,13 @@
     Contact: code@inmanta.com
 """
 
+import logging
 import os
 import time
-import logging
 
 import boto3
 import botocore
 import pytest
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -108,8 +107,8 @@ def cleanup(ec2, elb, resource_name_prefix: str):
     _cleanup(ec2, elb, resource_name_prefix)
 
 
-WAIT_ITERATIONS=120
-WAIT_SLEEP=5
+WAIT_ITERATIONS = 120
+WAIT_SLEEP = 5
 
 
 def _cleanup(ec2, elb, resource_name_prefix: str):
@@ -123,7 +122,10 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
 
     # Wait for instance termination
     count = 0
-    while not all([i.state["Name"] == "terminated" for i in instances]) and count < WAIT_ITERATIONS:
+    while (
+        not all([i.state["Name"] == "terminated" for i in instances])
+        and count < WAIT_ITERATIONS
+    ):
         count += 1
         time.sleep(WAIT_SLEEP)
         for i in instances:
