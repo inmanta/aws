@@ -16,12 +16,15 @@
     Contact: code@inmanta.com
 """
 
+import logging
 import os
 import time
 
 import boto3
 import botocore
 import pytest
+
+LOGGER = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
@@ -104,20 +107,30 @@ def cleanup(ec2, elb, resource_name_prefix: str):
     _cleanup(ec2, elb, resource_name_prefix)
 
 
+WAIT_ITERATIONS = 120
+WAIT_SLEEP = 5
+
+
 def _cleanup(ec2, elb, resource_name_prefix: str):
     # Delete instances
     instances = ec2.instances.filter(
         Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
     )
     for i in instances:
+        LOGGER.debug("Cleanup: terminating vm %s", i)
         i.terminate()
+
     # Wait for instance termination
     count = 0
-    while not all([i.state["Name"] == "terminated" for i in instances]) and count < 120:
+    while (
+        not all([i.state["Name"] == "terminated" for i in instances])
+        and count < WAIT_ITERATIONS
+    ):
         count += 1
-        time.sleep(5)
+        time.sleep(WAIT_SLEEP)
         for i in instances:
             i.reload()
+
     if not all([i.state["Name"] == "terminated" for i in instances]):
         raise Exception("Instances not in terminated state")
 
@@ -128,6 +141,7 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
     for igw in internet_gateways:
         for attached_vpc in igw.meta.data["Attachments"]:
             igw.detach_from_vpc(DryRun=False, VpcId=attached_vpc["VpcId"])
+        LOGGER.debug("Cleanup: deleting internet gateway %s", igw)
         igw.delete()
 
     # Delete vpcs
@@ -143,19 +157,25 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
             ]
         )
         for sg in sgs:
+            LOGGER.debug("Cleanup: deleting security group %s", sg)
             sg.delete()
+
         # Delete dependent subnets
         subnets = ec2.subnets.filter(Filters=[{"Name": "vpc-id", "Values": [vpc.id]}])
         for subnet in subnets:
+            LOGGER.debug("Cleanup: deleting subnet %s", subnet)
             subnet.delete()
+
         # Delete vpc
         vpc.delete()
+        LOGGER.debug("Cleanup: deleting vpc %s", vpc)
 
     # Delete volumes
     volumes = ec2.volumes.filter(
         Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
     )
     for volume in volumes:
+        LOGGER.debug("Cleanup: deleting volume %s", volume)
         volume.delete()
 
     # Delete SSH keys
@@ -163,6 +183,7 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         Filters=[{"Name": "key-name", "Values": [f"{resource_name_prefix}"]}]
     )
     for key in keys:
+        LOGGER.debug("Cleanup: deleting key %s", key)
         key.delete()
 
     # Delete loadbalancer
@@ -174,6 +195,7 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
     ]
 
     for lb_name in lbs_to_delete:
+        LOGGER.debug("Cleanup: deleting elb %s", lb_name)
         elb.delete_load_balancer(LoadBalancerName=lb_name)
 
 
