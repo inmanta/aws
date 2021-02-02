@@ -1085,7 +1085,7 @@ class ElasticSearchHandler(AWSHandler):
         ]
 
     def convert_resource(self, resource, update=True):
-        ElasticsearchClusterConfig = {
+        elasticsearch_cluster_config = {
             "InstanceType": resource.instance_type,
             "InstanceCount": resource.instance_count,
             "DedicatedMasterEnabled": resource.dedicated_master_enabled,
@@ -1093,17 +1093,17 @@ class ElasticSearchHandler(AWSHandler):
         }
 
         if resource.dedicated_master_enabled:
-            ElasticsearchClusterConfig[
+            elasticsearch_cluster_config[
                 "DedicatedMasterType"
             ] = resource.dedicated_master_type
-            ElasticsearchClusterConfig[
+            elasticsearch_cluster_config[
                 "DedicatedMasterCount"
             ] = resource.dedicated_master_count
 
         out = {
             "DomainName": resource.domain_name,
             "ElasticsearchVersion": resource.elasticsearch_version,
-            "ElasticsearchClusterConfig": ElasticsearchClusterConfig,
+            "ElasticsearchClusterConfig": elasticsearch_cluster_config,
             "EBSOptions": {
                 "EBSEnabled": resource.ebs_enabled,
                 "VolumeType": resource.volume_type,
@@ -1120,7 +1120,7 @@ class ElasticSearchHandler(AWSHandler):
         return out
 
     def create_resource(self, ctx: HandlerContext, resource: VirtualMachine) -> None:
-        ElasticsearchClusterConfig = {
+        elasticsearch_cluster_config = {
             "InstanceType": resource.instance_type,
             "InstanceCount": resource.instance_count,
             "DedicatedMasterEnabled": resource.dedicated_master_enabled,
@@ -1128,17 +1128,17 @@ class ElasticSearchHandler(AWSHandler):
         }
 
         if resource.dedicated_master_enabled:
-            ElasticsearchClusterConfig[
+            elasticsearch_cluster_config[
                 "DedicatedMasterType"
             ] = resource.dedicated_master_type
-            ElasticsearchClusterConfig[
+            elasticsearch_cluster_config[
                 "DedicatedMasterCount"
             ] = resource.dedicated_master_count
 
         self._es.create_elasticsearch_domain(
             DomainName=resource.domain_name,
             ElasticsearchVersion=resource.elasticsearch_version,
-            ElasticsearchClusterConfig=ElasticsearchClusterConfig,
+            ElasticsearchClusterConfig=elasticsearch_cluster_config,
             EBSOptions={
                 "EBSEnabled": resource.ebs_enabled,
                 "VolumeType": resource.volume_type,
