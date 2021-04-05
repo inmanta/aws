@@ -492,7 +492,7 @@ def assert_attachments_internet_gateway(
         )
         return len(igws[0].attachments) == nr_attachments
 
-    retry_limited(func, timeout=120)
+    retry_limited(func, timeout=900)
 
 
 def test_internet_gateway(project, ec2, resource_name_prefix: str):
@@ -517,7 +517,7 @@ aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc)
     )
     assert len(igw) == 1
 
-    # Deploy a second time
+    LOGGER.info("Deploy a second time")
     project.deploy_resource("aws::InternetGateway")
     igw = list(
         ec2.internet_gateways.filter(
@@ -528,14 +528,14 @@ aws::InternetGateway(name="{resource_name_prefix}", provider=provider, vpc=vpc)
 
     assert_attachments_internet_gateway(ec2, resource_name_prefix, 1)
 
-    # Remove vpc and test attaching it again
+    LOGGER.info("Remove vpc and test attaching it again")
     igw[0].detach_from_vpc(VpcId=igw[0].attachments[0]["VpcId"])
     assert_attachments_internet_gateway(ec2, resource_name_prefix, 0)
 
     project.deploy_resource("aws::InternetGateway")
     assert_attachments_internet_gateway(ec2, resource_name_prefix, 1)
 
-    # Purge it
+    LOGGER.info("Purge it")
     project.compile(
         f"""
 import aws
