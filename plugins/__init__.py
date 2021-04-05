@@ -1592,9 +1592,7 @@ class InternetGatewayHandler(AWSHandler):
             TagSpecifications=[
                 {
                     "ResourceType": "internet-gateway",
-                    "Tags": [
-                        {"Key": "Name", "Value": resource.name},
-                    ],
+                    "Tags": [{"Key": "Name", "Value": resource.name}],
                 },
             ]
         )
