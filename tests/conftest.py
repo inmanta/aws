@@ -111,7 +111,7 @@ WAIT_ITERATIONS = 120
 WAIT_SLEEP = 5
 
 
-def _cleanup(ec2, elb, resource_name_prefix: str):
+def cleanup_instances(ec2, resource_name_prefix: str):
     # Delete instances
     instances = ec2.instances.filter(
         Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
@@ -134,6 +134,8 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
     if not all([i.state["Name"] == "terminated" for i in instances]):
         raise Exception("Instances not in terminated state")
 
+
+def cleanup_igw(ec2, resource_name_prefix: str):
     # Delete InternetGateways
     internet_gateways = ec2.internet_gateways.filter(
         Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
@@ -144,6 +146,8 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         LOGGER.debug("Cleanup: deleting internet gateway %s", igw)
         igw.delete()
 
+
+def cleanup_vpc(ec2, resource_name_prefix: str):
     # Delete vpcs
     vpcs = ec2.vpcs.filter(
         Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
@@ -170,6 +174,8 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         vpc.delete()
         LOGGER.debug("Cleanup: deleting vpc %s", vpc)
 
+
+def cleanup_volumes(ec2, resource_name_prefix: str):
     # Delete volumes
     volumes = ec2.volumes.filter(
         Filters=[{"Name": "tag:Name", "Values": [f"{resource_name_prefix}*"]}]
@@ -178,6 +184,8 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         LOGGER.debug("Cleanup: deleting volume %s", volume)
         volume.delete()
 
+
+def cleanup_ssh(ec2, resource_name_prefix: str):
     # Delete SSH keys
     keys = ec2.key_pairs.filter(
         Filters=[{"Name": "key-name", "Values": [f"{resource_name_prefix}"]}]
@@ -186,6 +194,8 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
         LOGGER.debug("Cleanup: deleting key %s", key)
         key.delete()
 
+
+def cleanup_elb(elb, resource_name_prefix: str):
     # Delete loadbalancer
     lb_descriptions = elb.describe_load_balancers()
     lbs_to_delete = [
@@ -197,6 +207,23 @@ def _cleanup(ec2, elb, resource_name_prefix: str):
     for lb_name in lbs_to_delete:
         LOGGER.debug("Cleanup: deleting elb %s", lb_name)
         elb.delete_load_balancer(LoadBalancerName=lb_name)
+
+
+def _cleanup(ec2, elb, resource_name_prefix: str):
+    functions = [
+        (cleanup_instances, (ec2, resource_name_prefix)),
+        (cleanup_volumes, (ec2, resource_name_prefix)),
+        (cleanup_igw, (ec2, resource_name_prefix)),
+        (cleanup_vpc, (ec2, resource_name_prefix)),
+        (cleanup_ssh, (ec2, resource_name_prefix)),
+        (cleanup_elb, (elb, resource_name_prefix)),
+    ]
+    # ignore cleanup failures
+    for function, arguments in functions:
+        try:
+            function(*arguments)
+        except Exception:
+            LOGGER.exception("Failed to execute cleanup method %s", function.__name__)
 
 
 def retry_limited(fun, timeout, *args, **kwargs):
