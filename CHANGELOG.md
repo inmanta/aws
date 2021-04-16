@@ -1,3 +1,8 @@
+v3.0.10
+- Update inmanta-dev-dependencies package
+- Update boto3
+- Improve test stability
+
 v3.0.9
  - Fix a race condition when Creating a VM with security groups
 
