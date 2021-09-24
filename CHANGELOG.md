@@ -1,3 +1,6 @@
+v3.1.3
+- Marked unstable test as xfail
+
 v3.0.10
 - Update inmanta-dev-dependencies package
 - Update boto3
