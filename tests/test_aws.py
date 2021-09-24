@@ -172,6 +172,7 @@ subnet = aws::Subnet(name="test", provider=provider, cidr_block="10.0.0.0/24", v
         )
 
 
+@pytest.mark.xfail(strict=False)
 def test_deploy_vm_vpc(project, ec2, latest_amzn_image, resource_name_prefix: str):
     """
     Test deploying a virtual machine in a dedicated VPC
