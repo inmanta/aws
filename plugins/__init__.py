@@ -1486,9 +1486,13 @@ class SubnetHandler(AWSHandler):
         while tries > 0:
             try:
                 subnet = self._ec2.create_subnet(**args)
-            except botocore.exceptions.InvalidVpcID:
-                time.sleep(5)
+            except botocore.exceptions.ClientError:
                 tries -= 1
+                if tries > 0:
+                    ctx.info("An exception ocurred, retrying", exc_info=True)
+                    time.sleep(5)
+                else:
+                    raise
             else:
                 break
 
