@@ -1,3 +1,6 @@
+V3.1.4
+- Fix for incorrect retry in subnet creation
+
 v3.1.3
 - Marked unstable test as xfail
 
@@ -16,7 +19,7 @@ v3.0.7
  - Fix unstable test test_internet_gateway (#209)
 
 v3.0.6
- - Use inmanta-dev-dependencies package 
+ - Use inmanta-dev-dependencies package
 
 v3.0.5
  - Fix race condition when attaching tags to an internet gateway (#133)
