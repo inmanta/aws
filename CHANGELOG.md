@@ -1,4 +1,4 @@
-v3.1.5
+v3.1.6
 - Fix exception type in test_vm_subnets
 
 V3.1.4
