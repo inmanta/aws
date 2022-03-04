@@ -139,7 +139,9 @@ subnet = aws::Subnet(name="test", provider=provider, cidr_block="10.0.0.0/24", v
     )
 
     # set none
-    with pytest.raises((ExternalException, ValueError)):  # need ValueError here so that the test doesn't fail for stable products
+    with pytest.raises(
+        (ExternalException, ValueError)
+    ):  # need ValueError here so that the test doesn't fail for stable products
         project.compile(
             f"""
 import unittest
@@ -155,7 +157,9 @@ aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_im
         )
 
     # set both
-    with pytest.raises((ExternalException, ValueError)):  # need ValueError here so that the test doesn't fail for stable products
+    with pytest.raises(
+        (ExternalException, ValueError)
+    ):  # need ValueError here so that the test doesn't fail for stable products
         project.compile(
             f"""
 import unittest
