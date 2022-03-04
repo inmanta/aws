@@ -154,7 +154,7 @@ aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_im
         )
 
     # set both
-    with pytest.raises(ValueError):
+    with pytest.raises(ExternalException):  # NOQA F821
         project.compile(
             f"""
 import unittest
