@@ -19,6 +19,7 @@ import logging
 
 import pytest
 from conftest import retry_limited
+from inmanta.ast import ExternalException
 
 # States that indicate that an instance is terminated or is getting terminated
 INSTANCE_TERMINATING_STATES = ["terminated", "shutting-down"]
@@ -138,7 +139,9 @@ subnet = aws::Subnet(name="test", provider=provider, cidr_block="10.0.0.0/24", v
     )
 
     # set none
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        (ExternalException, ValueError)
+    ):  # need ValueError here so that the test doesn't fail for stable products
         project.compile(
             f"""
 import unittest
@@ -154,7 +157,9 @@ aws::VirtualMachine(provider=provider, flavor="t2.small", image="{latest_amzn_im
         )
 
     # set both
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        (ExternalException, ValueError)
+    ):  # need ValueError here so that the test doesn't fail for stable products
         project.compile(
             f"""
 import unittest

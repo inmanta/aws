@@ -1,3 +1,6 @@
+v3.1.6
+- Fix exception type in test_vm_subnets
+
 V3.1.4
 - Fix for incorrect retry in subnet creation
 
