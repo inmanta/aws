@@ -1,3 +1,6 @@
+v3.1.7
+- Update requirements.dev.txt
+
 v3.1.6
 - Fix exception type in test_vm_subnets
 
