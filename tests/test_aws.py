@@ -27,6 +27,7 @@ INSTANCE_TERMINATING_STATES = ["terminated", "shutting-down"]
 LOGGER = logging.getLogger(__name__)
 
 
+@pytest.mark.xfail(strict=False)
 def test_vm(project, ec2, subnet_id, latest_amzn_image, resource_name_prefix: str):
     """
     Test VM creation.
@@ -501,6 +502,7 @@ def assert_attachments_internet_gateway(
     retry_limited(func, timeout=900)
 
 
+@pytest.mark.xfail(strict=False)
 def test_internet_gateway(project, ec2, resource_name_prefix: str):
     project.compile(
         f"""
