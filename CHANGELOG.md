@@ -1,3 +1,6 @@
+v3.1.11
+- Add pytest.ini file and set asyncio_mode to auto
+
 v3.1.10
 - Mark unstable tests with xfail
 
