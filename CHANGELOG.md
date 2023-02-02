@@ -1,3 +1,8 @@
+# Changelog
+
+## v3.2.8 - ?
+
+
 v3.1.12
 - Remove pytest.ini and move its logic to pyproject.toml
 
