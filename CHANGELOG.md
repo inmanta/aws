@@ -1,6 +1,6 @@
 # Changelog
 
-## v4.0.0 - ?
+## v4.0.0 - 2023-12-07
 
 - Remove aws::Host and dependencies on web and ip. aws::Host worked as a very opinionated drop in replacement
   for ip::Host. However, because it was so opinionated it was never used.
