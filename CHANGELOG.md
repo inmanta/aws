@@ -1,7 +1,9 @@
 # Changelog
 
-## v3.2.14 - ?
+## v4.0.0 - ?
 
+- Remove aws::Host and dependencies on web and ip. aws::Host worked as a very opinionated drop in replacement
+  for ip::Host. However, because it was so opinionated it was never used.
 
 ## v3.2.13 - 2023-10-12
 
@@ -23,57 +25,75 @@
 
 
 ## v3.1.12
+
 - Remove pytest.ini and move its logic to pyproject.toml
 
 ## v3.1.11
+
 - Add pytest.ini file and set asyncio_mode to auto
 
 ## v3.1.10
+
 - Mark unstable tests with xfail
 
 ## v3.1.7
+
 - Update requirements.dev.txt
 
 ## v3.1.6
+
 - Fix exception type in test_vm_subnets
 
 ## v3.1.4
+
 - Fix for incorrect retry in subnet creation
 
 ## v3.1.3
+
 - Marked unstable test as xfail
 
 ## v3.0.10
+
 - Update inmanta-dev-dependencies package
 - Update boto3
 - Improve test stability
 
 ## v3.0.9
- - Fix a race condition when Creating a VM with security groups
+
+- Fix a race condition when Creating a VM with security groups
 
 ## v3.0.8
- - Fix broken VM cleanup in tests
+
+- Fix broken VM cleanup in tests
 
 ## v3.0.7
- - Fix unstable test test_internet_gateway (#209)
+
+- Fix unstable test test_internet_gateway (#209)
 
 ## v3.0.6
- - Use inmanta-dev-dependencies package
+
+- Use inmanta-dev-dependencies package
 
 ## v3.0.5
- - Fix race condition when attaching tags to an internet gateway (#133)
+
+- Fix race condition when attaching tags to an internet gateway (#133)
 
 ## v3.0.4
- - Remove botocore dependency
+
+- Remove botocore dependency
 
 ## v3.0.3
- - Upgrade boto3 dependency to v1.14
+
+- Upgrade boto3 dependency to v1.14
 
 ## v3.0.2
- - Pin dependencies using ~=
+
+- Pin dependencies using ~=
 
 ## v3.0.1
- - Pin transitive dependencies
+
+- Pin transitive dependencies
 
 ## v3.0.0
- - removed decrypt plugin because pycrypto dependency is no longer maintained
+
+- removed decrypt plugin because pycrypto dependency is no longer maintained
