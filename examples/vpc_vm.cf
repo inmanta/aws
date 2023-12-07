@@ -39,8 +39,3 @@ vm_public_ip = std::getfact(vm, "public_ip")
 
 # Get the ssh key encrypted windows PW
 pw = aws::decrypt(std::source("/inmanta.pem"), std::getfact(vm, "password_data"))
-
-# Linux VM
-linux_host = aws::Host(provider=provider, flavor="t2.nano", image="ami-0d063c6b", public_key=key,
-                       subnet=subnet, name="server", requires=[subnet, base_sg],
-                       install_agent=true, security_groups=mgmt_sg, os=redhat::centos7)

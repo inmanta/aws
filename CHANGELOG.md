@@ -4,6 +4,7 @@
 
 - Remove aws::Host and dependencies on web and ip. aws::Host worked as a very opinionated drop in replacement
   for ip::Host. However, because it was so opinionated it was never used.
+- The install_agent option has been removed. It depends on functionality that is no longer maintained.
 
 ## v3.2.13 - 2023-10-12
 

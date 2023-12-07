@@ -64,7 +64,6 @@ entity VMAttributes:
     string? subnet_id=null
     bool source_dest_check=true
     bool ebs_optimized=false
-    bool install_agent=false
 
     bool ignore_extra_volumes = false
     bool ignore_wrong_image = false
@@ -92,7 +91,6 @@ end
 index VirtualMachine(provider, name)
 
 implement VirtualMachine using req
-implement VirtualMachine using userData when install_agent
 
 implementation req for VirtualMachine:
     self.requires = self.provider.requires
