@@ -15,10 +15,7 @@
 
     Contact: code@inmanta.com
 """
-import web
 import ssh
-import ip
-import platform
 
 entity Provider:
     """
@@ -60,7 +57,7 @@ end
 
 implement ELB using std::none
 
-entity VMAttributes extends platform::UserdataVM:
+entity VMAttributes:
     string flavor
     string image
     string user_data
@@ -122,41 +119,6 @@ VirtualMachine.security_groups [0:] -- SecurityGroup
 
 ELB.instances [0:] -- VirtualMachine
 
-entity Host extends VMAttributes, ip::Host:
-    """
-        A subclass of ip::Host that creates a virtual machine on AWS.
-    """
-    bool install_agent=false
-end
-
-Host.vm [1] -- VirtualMachine
-Host.provider [1] -- Provider
-Host.public_key [1] -- ssh::Key
-
-Host.public_ip [0:1] -- ip::IP
-Host.private_ip [1] -- ip::IP
-
-Host.subnet [0:1] -- Subnet
-Host.security_groups [0:] -- SecurityGroup
-
-implementation userData for platform::UserdataVM:
-    platform::UserdataBootstrap(vm=self)
-end
-
-implementation awsHost for Host:
-    self.vm = VirtualMachine(name=name, public_key=public_key, provider=provider, user_data=user_data, image=image,
-                             flavor=flavor, subnet_id=subnet_id, source_dest_check=source_dest_check, subnet=subnet,
-                             security_groups=security_groups)
-    self.requires = self.vm
-
-    self.private_ip = ip::IP(v4=std::getfact(vm, "ip_address"))
-    self.public_ip = ip::IP(v4=std::getfact(vm, "public_ip"))
-    self.ip = self.public_ip.v4
-end
-
-implement Host using std::hostDefaults, awsHost
-implement Host using userData when install_agent
-
 entity Volume extends AWSResource:
     string name
     string attachmentpoint="/dev/sdb"
@@ -188,7 +150,7 @@ entity VPC extends AWSResource:
                                 with a tenancy of dedicated or host into a dedicated tenancy VPC.
     """
     string name
-    ip::cidr cidr_block
+    std::ipv4_network cidr_block
     instance_tenancy instance_tenancy="default"
     bool enableDnsHostnames=false
     bool enableDnsSupport=false
@@ -213,7 +175,7 @@ entity Subnet extends AWSResource:
     """
     string name
     string? availability_zone=null
-    ip::cidr cidr_block
+    std::ipv4_network cidr_block
     bool map_public_ip_on_launch=false
 end
 
@@ -248,8 +210,8 @@ entity Route extends AWSResource:
         :attr destination: The destination route
         :attr nexthop: The private ip associated with a ENI in the VPC.
     """
-    ip::cidr destination
-    ip::ip nexthop
+    std::ipv4_network destination
+    std::ipv4_address nexthop
 end
 
 VPC.routes [0:] -- Route.vpc [1]
@@ -277,21 +239,23 @@ index SecurityGroup(provider, name)
 
 implement SecurityGroup using std::none
 
+typedef protocol as string matching self in ["tcp", "udp", "icmp", "sctp", "all"]
+
 entity SecurityRule:
     """
         A filter rule in the a security group
 
         :param ip_protocol The type of ip protocol to allow. Currently this support tcp/udp/icmp/sctp or all
     """
-    ip::protocol ip_protocol
-    ip::port port_min=0
-    ip::port port_max=0
-    ip::port port=0
+    protocol ip_protocol
+    std::port port_min=0
+    std::port port_max=0
+    std::port port=0
     direction direction
 end
 
 entity IPrule extends SecurityRule:
-    ip::cidr remote_prefix
+    std::ipv4_network remote_prefix
 end
 
 entity GroupRule extends SecurityRule:

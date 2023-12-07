@@ -16,7 +16,6 @@
     Contact: code@inmanta.com
 """
 import aws
-import ip
 
 entity ElasticSearch extends aws::AWSResource:
     """

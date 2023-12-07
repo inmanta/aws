@@ -16,7 +16,6 @@
     Contact: code@inmanta.com
 """
 import aws
-import ip
 
 entity RDS extends aws::AWSResource:
     """
@@ -31,7 +30,7 @@ entity RDS extends aws::AWSResource:
     string master_user_name="root"
     string master_user_password
     string subnet_group
-    ip::port port=3306
+    std::port port=3306
     bool public=false
     dict tags={}
 end

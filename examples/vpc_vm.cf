@@ -1,5 +1,4 @@
 import aws
-import ip
 import redhat
 import redhat::epel
 import ssh
