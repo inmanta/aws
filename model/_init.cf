@@ -50,8 +50,8 @@ entity ELB extends AWSResource:
     """
     string name
     string security_group="default"
-    number listen_port=80
-    number dest_port=80
+    std::port listen_port=80
+    std::port dest_port=80
     string protocol="http"
 end
 
@@ -68,7 +68,7 @@ entity VMAttributes:
     bool ignore_extra_volumes = false
     bool ignore_wrong_image = false
 
-    number root_volume_size = 16
+    int root_volume_size = 16
     string root_volume_type = "gp2"
 
 end
@@ -122,7 +122,7 @@ entity Volume extends AWSResource:
     string attachmentpoint="/dev/sdb"
     string availability_zone
     bool encrypted=false
-    number size=10
+    int size=10
     string volume_type="gp2"
     dict tags={}
 end
@@ -229,8 +229,8 @@ entity SecurityGroup extends AWSResource:
     string description=""
     string name
     bool manage_all=true
-    number retries=10
-    number wait=5
+    int retries=10
+    int wait=5
 end
 
 index SecurityGroup(provider, name)
