@@ -1093,12 +1093,12 @@ class ElasticSearchHandler(AWSHandler):
         }
 
         if resource.dedicated_master_enabled:
-            elasticsearch_cluster_config[
-                "DedicatedMasterType"
-            ] = resource.dedicated_master_type
-            elasticsearch_cluster_config[
-                "DedicatedMasterCount"
-            ] = resource.dedicated_master_count
+            elasticsearch_cluster_config["DedicatedMasterType"] = (
+                resource.dedicated_master_type
+            )
+            elasticsearch_cluster_config["DedicatedMasterCount"] = (
+                resource.dedicated_master_count
+            )
 
         out = {
             "DomainName": resource.domain_name,
@@ -1128,12 +1128,12 @@ class ElasticSearchHandler(AWSHandler):
         }
 
         if resource.dedicated_master_enabled:
-            elasticsearch_cluster_config[
-                "DedicatedMasterType"
-            ] = resource.dedicated_master_type
-            elasticsearch_cluster_config[
-                "DedicatedMasterCount"
-            ] = resource.dedicated_master_count
+            elasticsearch_cluster_config["DedicatedMasterType"] = (
+                resource.dedicated_master_type
+            )
+            elasticsearch_cluster_config["DedicatedMasterCount"] = (
+                resource.dedicated_master_count
+            )
 
         self._es.create_elasticsearch_domain(
             DomainName=resource.domain_name,
