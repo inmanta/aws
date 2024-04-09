@@ -60,7 +60,7 @@ def elb(session):
 def latest_amzn_image(ec2):
     result = ec2.images.filter(
         Owners=["amazon"],
-        Filters=[{"Name": "name", "Values": ["amzn-ami-hvm-*-x86_64-gp2"]}],
+        Filters=[{"Name": "name", "Values": ["amzn2-ami-kernel-*-hvm-*-x86_64-gp2"]}]
     )
     name_to_image_dct = {r.meta.data["Name"]: r for r in result}
     name_latest_image = sorted(name_to_image_dct.keys())[-1]
