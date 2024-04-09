@@ -2,6 +2,7 @@
 
 ## v4.0.2 - ?
 
+- Migrate test suite from Amazon Linux 1 to Amazon Linux 2 AMI
 
 ## v4.0.1 - 2024-03-29
 
