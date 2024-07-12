@@ -1,6 +1,6 @@
 # Changelog
 
-## v4.0.4 - ?
+## v4.0.4 - 2024-07-12
 
 - Convert to v2 module
 
